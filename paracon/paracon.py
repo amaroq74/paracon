@@ -339,6 +339,7 @@ class UnprotoScreen(urwid.WidgetWrap):
         if not src:
             src = config.get('Setup', 'callsign')
         dst = config.get('Unproto', 'destination')
+        to = config.get('Unproto', 'to')
         via = config.get('Unproto', 'via')
         port = config.get_int('Unproto', 'port')
         if port is not None:
@@ -348,6 +349,10 @@ class UnprotoScreen(urwid.WidgetWrap):
         if not self._valid_config(src, dst, via):
             self._mon.add_line(('unproto_error', 'Unproto config is invalid'))
             return
+
+        if to != '':
+            text = f':{to:<9}:{text}'
+
         vias = via.split() if via else None
         try:
             app.server.send_unproto(port, src, dst, text, vias)
@@ -394,6 +399,7 @@ class UnprotoScreen(urwid.WidgetWrap):
         config.set('Unproto', 'source', info.src)
         config.set('Unproto', 'destination', info.dst)
         config.set('Unproto', 'via', info.via)
+        config.set('Unproto', 'to', info.to)
         config.set_int('Unproto', 'port',
                        app.ports.port_for_index(info.port[0]))
         config.save_config()
@@ -405,7 +411,8 @@ class UnprotoScreen(urwid.WidgetWrap):
             src = config.get('Setup', 'callsign')
         dst = config.get('Unproto', 'destination')
         via = config.get('Unproto', 'via')
-        text = "From: {}  To: {} ".format(src, dst)
+        to = config.get('Unproto', 'to')
+        text = "From: {}  Dest: {}  To: {}".format(src, dst,to)
         if via:
             # Vias are saved with spaces, but displayed with commas
             via = ','.join(via.split())
@@ -1379,6 +1386,7 @@ class UnprotoDialog(urwidx.FormDialog):
         src: str
         dst: str
         via: str
+        to: str
         port: tuple
 
     def __init__(self, info=None):
@@ -1390,6 +1398,7 @@ class UnprotoDialog(urwidx.FormDialog):
             src = self._info.src
             dst = self._info.dst
             via = self._info.via
+            to = self._info.to
             port_ix = self._info.port[0]
         else:
             src = (config.get('Unproto', 'source')
@@ -1397,6 +1406,7 @@ class UnprotoDialog(urwidx.FormDialog):
                    or '')
             dst = config.get('Unproto', 'destination') or ''
             via = config.get('Unproto', 'via') or ''
+            to  = config.get('Unproto', 'to') or ''
 
             port = config.get_int('Unproto', 'port')
             # Ensure a valid index into list of ports
@@ -1414,6 +1424,9 @@ class UnprotoDialog(urwidx.FormDialog):
             'dst', 'Destination', group='dest', value=dst,
             filter=callsign_filter)
         self.add_edit_str_field(
+            'to', '         To', group='dest', value=to,
+            filter=callsign_filter)
+        self.add_edit_str_field(
             'via', '        Via', group='dest', value=via,
             filter=via_filter)
         self.add_group('source', "Send Using")
@@ -1427,6 +1440,7 @@ class UnprotoDialog(urwidx.FormDialog):
         src = self.get_edit_str_value('src')
         dst = self.get_edit_str_value('dst')
         via = self.get_edit_str_value('via')
+        to  = self.get_edit_str_value('to')
         if not (src and dst):
             return "Both source and destination are required"
         if not ax25.Address.valid_call(src):
@@ -1446,11 +1460,12 @@ class UnprotoDialog(urwidx.FormDialog):
         src = self.get_edit_str_value('src').upper()
         dst = self.get_edit_str_value('dst').upper()
         via = self.get_edit_str_value('via').upper()
+        to  = self.get_edit_str_value('to').upper()
         port = self.get_dropdown_value('port')
         # The user may have used comma separators or something else, but we
         # standardize here on spaces.
         vias = re.findall("[A-Z0-9-]+", via)
-        info = self.UnprotoInfo(src, dst, ' '.join(vias), port)
+        info = self.UnprotoInfo(src, dst, ' '.join(vias), to, port)
         urwid.emit_signal(self, 'unproto_info', info)
 
 
