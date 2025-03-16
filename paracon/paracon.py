@@ -350,8 +350,20 @@ class UnprotoScreen(urwid.WidgetWrap):
             self._mon.add_line(('unproto_error', 'Unproto config is invalid'))
             return
 
-        if to != '':
-            text = f':{to:<9}:{text}'
+        # If line starts with double colons, fill in configure to value
+        if text.startswith('::') and to != '':
+            remStr = text[2:]
+            text = f':{to:<9}:{remStr}'
+
+        # If line starts with a colon and has another colon less than 9 spaces from the first
+        # pad in the text between the colons to 9 spaces
+        else:
+           colPos = [m.start() for m in re.finditer(':', text)]
+
+           if len(colPos) >= 2 and colPos[0] == 0 and colPos[1] < 10:
+              toStr = text[1:colPos[1]]
+              remStr = text[colPos[1]+1:]
+              text = f':{toStr:<9}:{remStr}'
 
         vias = via.split() if via else None
         try:
@@ -412,7 +424,7 @@ class UnprotoScreen(urwid.WidgetWrap):
         dst = config.get('Unproto', 'destination')
         via = config.get('Unproto', 'via')
         to = config.get('Unproto', 'to')
-        text = "From: {}  Dest: {}  To: {}".format(src, dst,to)
+        text = "From: {}  Dest: {}  To: {} ".format(src, dst,to)
         if via:
             # Vias are saved with spaces, but displayed with commas
             via = ','.join(via.split())
