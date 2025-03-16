@@ -610,7 +610,10 @@ class ConnectionPanel(urwid.WidgetWrap):
 
     def _gather_lines(self, data):
         if not isinstance(data, str):
-            data = data.decode('utf-8')
+            try:
+                data = data.decode('utf-8')
+            except Exception:
+                data = ""
         parts = data.split('\r')
         if len(self._line_remains):
             parts[0] = self._line_remains + parts[0]
