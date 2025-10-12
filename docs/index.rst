@@ -46,7 +46,7 @@ Installation
 ------------
 
 .. important::
-   This application requires Python 3.7 or later.
+   This application requires Python 3.9 or later.
 
 Download the latest release from GitHub.
 

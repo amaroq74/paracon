@@ -33,7 +33,7 @@ Key features of Paracon include:
 
 ## Installation
 
-**Important**: This application requires Python 3.7 or later.
+**Important**: This application requires Python 3.9 or later.
 
 Download the latest release from GitHub.
 
