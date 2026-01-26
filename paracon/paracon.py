@@ -1,15 +1,18 @@
 # =============================================================================
-# Copyright (c) 2021-2024 Martin F N Cooper
+# Copyright (c) 2021-2025 Martin F N Cooper
 #
 # Author: Martin F N Cooper
 # License: MIT License
 # =============================================================================
 
 __author__ = 'Martin F N Cooper'
-__version__ = '1.1.0'
+__version__ = '1.3.0'
 
+import argparse
+import codecs
 from enum import Enum
 import logging
+import pathlib
 import re
 import sys
 import time
@@ -72,6 +75,7 @@ palette = [
     # Monitor
     ('monitor_text', 'white', 'black'),
     ('monitor_call', 'light green', 'black'),
+    ('monitor_own', 'light magenta', 'black'),
 
     # Connections
     ('connection_inbound', 'light cyan', 'black'),
@@ -192,22 +196,23 @@ _INFO_LINE_PATTERN = re.compile(r"""
 """, re.VERBOSE)
 
 
-def _color_info_line(text):
+def _color_info_line(text, own=False):
+    monitor_call = 'monitor_own' if own else 'monitor_call'
     text = text.rstrip('\x00').rstrip()
     m = _INFO_LINE_PATTERN.match(text)
     if not m:
         return None
     line = [
         ('monitor_text', "{}:Fm ".format(m['msg_port'])),
-        ('monitor_call', m['call_from']),
+        (monitor_call, m['call_from']),
         ('monitor_text', " To "),
-        ('monitor_call', m['call_to'])
+        (monitor_call, m['call_to'])
     ]
     if m['call_via']:
         vias = m['call_via'].split(',')
         line.append(('monitor_text', " Via "))
         for via in vias:
-            line.append(('monitor_call', via))
+            line.append((monitor_call, via))
             line.append(('monitor_text', ','))
         line = line[:-1]
     line.append(
@@ -222,7 +227,7 @@ class MonitorPanel(urwid.WidgetWrap):
         self._queue = None
         self._periodic_key = None
         super().__init__(self._list)
-        self._log.set_logfile('monitor.log')
+        self._log.set_logfile(app.log_dir / 'monitor.log')
         urwid.connect_signal(app, 'server_started', self._start_monitor)
         urwid.connect_signal(app, 'server_stopping', self._stop_monitor)
 
@@ -240,9 +245,11 @@ class MonitorPanel(urwid.WidgetWrap):
         while not self._queue.empty():
             (kind, port, line) = self._queue.get()
             if (kind is pserver.MonitorType.UNPROTO_INFO
+                    or kind is pserver.MonitorType.UNPROTO_OWN
                     or kind is pserver.MonitorType.CONN_INFO
                     or kind is pserver.MonitorType.SUPER_INFO):
-                clr_line = _color_info_line(line)
+                clr_line = _color_info_line(
+                    line, kind is pserver.MonitorType.UNPROTO_OWN)
                 if clr_line:
                     self.add_line(clr_line)
                 else:
@@ -449,6 +456,7 @@ class ConnectionPanel(urwid.WidgetWrap):
         self._panel_changed_callback = panel_changed_callback
         self._connection = None
         self._connection_start = None
+        self._decoders = self._init_decoders()
         self._timer_key = None
         self._periodic_key = None
         self._line_remains = ''
@@ -492,6 +500,19 @@ class ConnectionPanel(urwid.WidgetWrap):
         config.set_int('Connect', 'port',
                        app.ports.port_for_index(info.port[0]))
         config.save_config()
+
+    def _init_decoders(self):
+        decoders = ['utf-8']
+        alt = config.get('Connect', 'decode_alt') or ''
+        if alt:
+            try:
+                codecs.lookup(alt)
+            except LookupError:
+                logger.error(
+                    'Invalid codec configured in decode_alt: {}'.format(alt))
+            else:
+                decoders.append(alt)
+        return decoders
 
     def _make_connection(self, info):
         registered = app.server.register_callsign(info.connect_as)
@@ -571,7 +592,8 @@ class ConnectionPanel(urwid.WidgetWrap):
                     conn = self._connection
                     self._panel_changed_callback(self, conn)
                     self._log.set_logfile(
-                        '{}_{}.log'.format(conn.call_from, conn.call_to))
+                        app.log_dir
+                        / '{}_{}.log'.format(conn.call_from, conn.call_to))
                     self.add_line('Connected to {}'.format(conn.call_to))
                     self._menubar.menu.enable(
                         self.MenuCommand.DISCONNECT, True)
@@ -608,21 +630,44 @@ class ConnectionPanel(urwid.WidgetWrap):
                 logger.debug('Unknown queue entry: {}'.format(kind))
         return result
 
+    def _decode_line(self, data):
+        for decoder in self._decoders:
+            try:
+                line = data.decode(decoder)
+            except UnicodeDecodeError:
+                continue
+            else:
+                break
+        else:
+            # While it is tempting to use 'backslashreplace' here, we need
+            # to use 'replace' to preserve widths. If a byte must be replaced
+            # because it cannot be decoded, replacing it with the string
+            # '\xhh' would mess up line layout on the terminal.
+            line = data.decode('utf-8', 'replace')
+        return line
+
     def _gather_lines(self, data):
+
         if not isinstance(data, str):
             try:
                 data = data.decode('utf-8')
             except Exception:
                 data = ""
-        parts = data.split('\r')
+        # The text encodings we support all use the C0 control set, so it is
+        # safe to identify line breaks before decoding. This allows us to use
+        # one decoder per line, and avoid having fragments of a single line
+        # decoded with different decoders.
+        data = data.replace(b'\r\n', b'\r').replace(b'\n', b'\r')
+        parts = data.split(b'\r')
+
         if len(self._line_remains):
             parts[0] = self._line_remains + parts[0]
-            self._line_remains = ""
-        if data[-1] != '\r':
+            self._line_remains = b''
+        if data[-1] != b'\r':
             self._line_remains = parts[-1]
         del parts[-1]
         for part in parts:
-            self.add_line(part)
+            self.add_line(self._decode_line(part))
 
     def add_line(self, line):
         text = urwid.Text(line)
@@ -810,7 +855,16 @@ class Application(metaclass=urwid.MetaSignals):
         self._server = None
         self._ports = None
         self._debug_engine = False
-        self._configure_logging()
+        self._log_dir = pathlib.Path.cwd()
+
+    def set_log_dir(self, log_dir):
+        if log_dir:
+            self._log_dir = pathlib.Path(log_dir)
+            self._log_dir.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def log_dir(self):
+        return self._log_dir
 
     def _configure_logging(self):
         # Read configured settings
@@ -824,7 +878,7 @@ class Application(metaclass=urwid.MetaSignals):
         # Create a file-based handler with format spec
         fmt = ("{asctime} [{name:11s}:{lineno:-4d}] "
                "[{levelname:7s}] {message}")
-        fh = logging.FileHandler('paracon.log')
+        fh = logging.FileHandler(self._log_dir / 'paracon.log')
         fh.setFormatter(logging.Formatter(fmt, '%Y-%m-%d %H:%M:%S', '{'))
 
         # Add to both loggers
@@ -1023,6 +1077,7 @@ class Application(metaclass=urwid.MetaSignals):
             raise urwid.ExitMainLoop()
 
     def run(self):
+        self._configure_logging()
         self._loop = urwid.MainLoop(
             self._create_widgets(),
             palette=self._palette,
@@ -1488,6 +1543,58 @@ class UnprotoDialog(urwidx.FormDialog):
 # Startup
 # =============================================================================
 
+def get_args():
+    class ConfigFileCheckAction(argparse.Action):
+        def __call__(self, parser, namespace, values, option_string=None):
+            cfg_file = pathlib.Path(values)
+            if not cfg_file.is_file():
+                if cfg_file.exists():
+                    # If it exists but isn't a file, it's invalid
+                    raise argparse.ArgumentError(
+                        self, f'invalid config file: {values}')
+                try:
+                    # If it doesn't exist yet, make sure we can create it
+                    cfg_file.parent.mkdir(parents=True, exist_ok=True)
+                    cfg_file.touch()
+                except OSError:
+                    raise argparse.ArgumentError(
+                        self, f'cannot create config file: {values}')
+            setattr(namespace, self.dest, values)
+
+    class LogDirCheckAction(argparse.Action):
+        def __call__(self, parser, namespace, values, option_string=None):
+            log_dir = pathlib.Path(values)
+            if not log_dir.is_dir():
+                if log_dir.exists():
+                    # If it exists but isn't a directory, it's invalid
+                    raise argparse.ArgumentError(
+                        self, f'invalid log directory: {values}')
+                try:
+                    # If it doesn't exist yet, make sure we can create it
+                    log_dir.mkdir(parents=True, exist_ok=True)
+                except OSError:
+                    raise argparse.ArgumentError(
+                        self, f'cannot create log directory: {values}')
+            setattr(namespace, self.dest, values)
+
+    parser = argparse.ArgumentParser(
+        description=f'Paracon packet radio console, version {__version__}',
+        epilog='Documentation is online at https://paracon.readthedocs.io/')
+    parser.add_argument(
+        '-c', '--config',
+        metavar='CONFIGFILE', default=None, action=ConfigFileCheckAction,
+        help='full path to configuration file (default: current directory)')
+    parser.add_argument(
+        '-l', '--logdir',
+        default=None, action=LogDirCheckAction,
+        help='full path to log file directory (default: current directory)')
+    parser.add_argument(
+        '-V', '--version',
+        action='version', version=f'Paracon {__version__}',
+        help='show version number and exit')
+    return parser.parse_args()
+
+
 # This could use some explanation. The config and app vars are created at the
 # top level so that they are accessible globally, without the need to use the
 # 'global' keyword. The run() function exists to provide an entry point for
@@ -1495,11 +1602,13 @@ class UnprotoDialog(urwidx.FormDialog):
 # applies when running the code outside of a zipapp, during development.
 
 config = config.Config('paracon', 'paracon_config')
-config.load_config()
 app = Application()
 
 
 def run():
+    args = get_args()
+    config.load_config(args.config)
+    app.set_log_dir(args.logdir)
     app.run()
 
 
