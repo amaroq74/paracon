@@ -657,13 +657,13 @@ class ConnectionPanel(urwid.WidgetWrap):
         # safe to identify line breaks before decoding. This allows us to use
         # one decoder per line, and avoid having fragments of a single line
         # decoded with different decoders.
-        data = data.replace(b'\r\n', b'\r').replace(b'\n', b'\r')
-        parts = data.split(b'\r')
+        data = data.replace('\r\n', '\r').replace('\n', '\r')
+        parts = data.split('\r')
 
         if len(self._line_remains):
             parts[0] = self._line_remains + parts[0]
-            self._line_remains = b''
-        if data[-1] != b'\r':
+            self._line_remains = ''
+        if data[-1] != '\r':
             self._line_remains = parts[-1]
         del parts[-1]
         for part in parts:
