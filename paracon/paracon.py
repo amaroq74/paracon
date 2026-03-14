@@ -1657,7 +1657,7 @@ class AprsScreen(urwid.WidgetWrap):
             port = app.ports.valid_port(port)
         if port is None:
             port = app.ports.port_for_index(0)
-        ack_text = ':{:<9}:ack{}}'.format(to_call, msg_num)
+        ack_text = ':{:<9}:ack{}'.format(to_call, msg_num)
         vias = via.split() if via else None
         try:
             app.server.send_unproto(port, src, dst, ack_text, vias)
