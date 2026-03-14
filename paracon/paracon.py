@@ -178,7 +178,6 @@ class FixedMenuBar(urwidx.MenuBar):
         # urwid.WidgetWrap stores the wrapped widget in _w
         self._w = widget
 
-
 class Ports:
     """
     Per the AGWPE spec, port information comes from the server in the form
@@ -379,6 +378,7 @@ class UnprotoScreen(urwid.WidgetWrap):
 
     def __init__(self, mwin):
         self._mon = mwin
+        self._last_sent = ''
         self._menubar = FixedMenuBar(self.MenuCommand)
         self._set_info()
         urwid.connect_signal(
@@ -419,6 +419,8 @@ class UnprotoScreen(urwid.WidgetWrap):
             self._mon.add_line(
                 ('unproto_error', 'AGWPE server has disconnected'))
             app.server_disappeared()
+            return
+        self._last_sent = text
 
     def _valid_config(self, src, dst, via):
         if not (src and ax25.Address.valid_call(src)
@@ -440,6 +442,11 @@ class UnprotoScreen(urwid.WidgetWrap):
         if key:
             key = super().keypress(size, key)
         if key:
+            # Up arrow recalls the last sent message into the entry field.
+            if key == 'up' and self._last_sent and not self._entry.get_edit_text():
+                self._entry.set_edit_text(self._last_sent)
+                self._entry.set_edit_pos(len(self._last_sent))
+                return None
             # If the key hasn't been handled already, let the line entry
             # widget see if it wants it. This allows someone to type into
             # that widget without the focus having to be put there first.
@@ -1641,6 +1648,7 @@ class AprsScreen(urwid.WidgetWrap):
 
     def __init__(self, mwin):
         self._mon = mwin
+        self._last_sent = ''
         self._menubar = FixedMenuBar(self.MenuCommand)
         self._set_info()
         urwid.connect_signal(
@@ -1736,6 +1744,7 @@ class AprsScreen(urwid.WidgetWrap):
             app.server_disappeared()
             return
         self.add_line(('aprs_outbound', 'To {} [{}]: {}'.format(to, msg_num, text)))
+        self._last_sent = text
 
     def _valid_config(self, src, to):
         if not src or not ax25.Address.valid_call(src):
@@ -1801,6 +1810,11 @@ class AprsScreen(urwid.WidgetWrap):
         if key:
             key = super().keypress(size, key)
         if key:
+            # Up arrow recalls the last sent message into the entry field.
+            if key == 'up' and self._last_sent and not self._entry.get_edit_text():
+                self._entry.set_edit_text(self._last_sent)
+                self._entry.set_edit_pos(len(self._last_sent))
+                return None
             key = self._entry.keypress((size[0] - 2, ), key)
         return key
 
