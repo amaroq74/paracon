@@ -6,7 +6,7 @@
 # =============================================================================
 
 __author__ = 'Martin F N Cooper'
-__version__ = '1.4.3'
+__version__ = '1.4.4'
 
 import argparse
 import codecs
@@ -1564,7 +1564,7 @@ def _format_aprs_message(to_call, text, msg_num):
     The destination callsign field is exactly 9 characters, left-justified
     and padded with spaces.
     """
-    return ':{:<9}:{}{{{}}'.format(to_call, text, msg_num)
+    return ':{:<9}:{}{{{}'.format(to_call, text, msg_num)
 
 
 def _parse_aprs_message(text):
