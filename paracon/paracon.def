@@ -17,6 +17,7 @@ via =
 [AprsMessages]
 port = 0
 source = 
+destination = APICON
 to = 
 via = 
 

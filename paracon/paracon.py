@@ -6,7 +6,7 @@
 # =============================================================================
 
 __author__ = 'Martin F N Cooper'
-__version__ = '1.4.1'
+__version__ = '1.3.2'
 
 import argparse
 import codecs
@@ -1650,13 +1650,13 @@ class AprsScreen(urwid.WidgetWrap):
 
     def _send_ack(self, to_call, msg_num):
         src = config.get('AprsMessages', 'source') or config.get('Setup', 'callsign')
+        dst = config.get('AprsMessages', 'destination') or 'APICON'
         via = config.get('AprsMessages', 'via') or ''
         port = config.get_int('AprsMessages', 'port')
         if port is not None:
             port = app.ports.valid_port(port)
         if port is None:
             port = app.ports.port_for_index(0)
-        dst = 'APICON'
         ack_text = ':{:<9}:ack{}'.format(to_call, msg_num)
         vias = via.split() if via else None
         try:
@@ -1675,6 +1675,7 @@ class AprsScreen(urwid.WidgetWrap):
             self.add_line(('aprs_error', 'Not connected to AGWPE server'))
             return
         src = config.get('AprsMessages', 'source') or config.get('Setup', 'callsign')
+        dst = config.get('AprsMessages', 'destination') or 'APICON'
         to = config.get('AprsMessages', 'to') or ''
         via = config.get('AprsMessages', 'via') or ''
         port = config.get_int('AprsMessages', 'port')
@@ -1687,7 +1688,6 @@ class AprsScreen(urwid.WidgetWrap):
             return
         msg_num = _next_aprs_msg_num()
         payload = _format_aprs_message(to, text, msg_num)
-        dst = 'APICON'
         vias = via.split() if via else None
         try:
             app.server.send_unproto(port, src, dst, payload, vias)
@@ -1719,6 +1719,7 @@ class AprsScreen(urwid.WidgetWrap):
 
     def _change_config(self, info):
         config.set('AprsMessages', 'source', info.src)
+        config.set('AprsMessages', 'destination', info.dst)
         config.set('AprsMessages', 'to', info.to)
         config.set('AprsMessages', 'via', info.via)
         config.set_int('AprsMessages', 'port',
@@ -1728,9 +1729,10 @@ class AprsScreen(urwid.WidgetWrap):
 
     def _set_info(self, data=None):
         src = config.get('AprsMessages', 'source') or config.get('Setup', 'callsign') or '?'
+        dst = config.get('AprsMessages', 'destination') or 'APICON'
         to = config.get('AprsMessages', 'to') or '?'
         via = config.get('AprsMessages', 'via') or ''
-        text = "From: {}  To: {} ".format(src, to)
+        text = "From: {}  Dest: {}  To: {} ".format(src, dst, to)
         if via:
             via = ','.join(via.split())
             text += " Via: {} ".format(via)
@@ -1768,6 +1770,7 @@ class AprsDialog(urwidx.FormDialog):
 
     class AprsInfo(NamedTuple):
         src: str
+        dst: str
         to: str
         via: str
         port: tuple
@@ -1779,6 +1782,7 @@ class AprsDialog(urwidx.FormDialog):
     def add_fields(self):
         if self._info:
             src = self._info.src
+            dst = self._info.dst
             to = self._info.to
             via = self._info.via
             port_ix = self._info.port[0]
@@ -1786,6 +1790,7 @@ class AprsDialog(urwidx.FormDialog):
             src = (config.get('AprsMessages', 'source')
                    or config.get('Setup', 'callsign')
                    or '')
+            dst = config.get('AprsMessages', 'destination') or 'APICON'
             to = config.get('AprsMessages', 'to') or ''
             via = config.get('AprsMessages', 'via') or ''
             port = config.get_int('AprsMessages', 'port')
@@ -1802,6 +1807,9 @@ class AprsDialog(urwidx.FormDialog):
             'to', 'To (callsign)', group='dest', value=to,
             filter=callsign_filter)
         self.add_edit_str_field(
+            'dst', '    Destination', group='dest', value=dst,
+            filter=callsign_filter)
+        self.add_edit_str_field(
             'via', '            Via', group='dest', value=via,
             filter=via_filter)
         self.add_group('source', "Send Using")
@@ -1813,12 +1821,17 @@ class AprsDialog(urwidx.FormDialog):
 
     def validate(self):
         src = self.get_edit_str_value('src')
+        dst = self.get_edit_str_value('dst')
         to = self.get_edit_str_value('to')
         via = self.get_edit_str_value('via')
         if not src:
             return "My call is required"
         if not ax25.Address.valid_call(src):
             return "My call is invalid"
+        if not dst:
+            return "Destination is required"
+        if not ax25.Address.valid_call(dst):
+            return "Destination is invalid"
         if not to:
             return "To (callsign) is required"
         if not ax25.Address.valid_call(to):
@@ -1834,11 +1847,12 @@ class AprsDialog(urwidx.FormDialog):
 
     def save(self):
         src = self.get_edit_str_value('src').upper()
+        dst = self.get_edit_str_value('dst').upper()
         to = self.get_edit_str_value('to').upper()
         via = self.get_edit_str_value('via').upper()
         port = self.get_dropdown_value('port')
         vias = re.findall("[A-Z0-9-]+", via)
-        info = self.AprsInfo(src, to, ' '.join(vias), port)
+        info = self.AprsInfo(src, dst, to, ' '.join(vias), port)
         urwid.emit_signal(self, 'aprs_info', info)
 
 
