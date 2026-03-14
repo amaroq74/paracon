@@ -1613,31 +1613,28 @@ def _format_aprs_message(to_call, text, msg_num):
     """
     return ':{:<9}:{}{{{}'.format(to_call, text, msg_num)
 
-def _parse_aprs_message(text):
+def _parse_aprs_message(text, from_call):
     """
-    Parse an APRS message payload. Returns (to_call, msg_body, msg_num) or
-    None if the text is not a valid APRS message.
+    Returns (to_call, msg_body, msg_num, ack_call) where ack_call is the
+    station to send the ack to. For normal messages, ack_call == to_call.
+    For third-party messages, ack_call is the originating station from
+    the third-party header.
+    """
+    ack_call = from_call
 
-    Handles two formats:
-    1. Standard APRS message:
-         :CALLSIGN :message{num}
-    2. Third-party traffic (prefixed with '}'):
-         }EMAIL>APJIE4,TCPIP,KC6SSM-5*::CALLSIGN :message{num}
-         The third-party header is stripped and the inner payload is parsed normally.
-    """
     # Strip third-party traffic wrapper if present
     if text.startswith('}'):
-        # The inner APRS payload starts at the '::' that precedes the addressee.
-        # Find the '::' sequence that marks the start of the message block.
         inner_start = text.find('::')
         if inner_start == -1:
             return None
-        # Advance past the first ':', so text is now ':CALLSIGN :message{num}'
+        # Extract originator from header (between '}' and '>')
+        header = text[1:inner_start]           # e.g. "EMAIL>APJIE4,TCPIP,KC6SSM-5*"
+        gt = header.find('>')
+        ack_call = header[:gt] if gt != -1 else None
         text = text[inner_start + 1:]
 
     if not text.startswith(':'):
         return None
-    # Second colon must be at position 10 (9-char callsign field + leading ':')
     if len(text) < 11 or text[10] != ':':
         return None
     to_call = text[1:10].strip()
@@ -1647,7 +1644,8 @@ def _parse_aprs_message(text):
         brace = body.rfind('{')
         msg_num = body[brace + 1:]
         body = body[:brace]
-    return (to_call, body, msg_num)
+
+    return (to_call, body, msg_num, ack_call)
 
 class AprsScreen(urwid.WidgetWrap):
     """
@@ -1696,10 +1694,10 @@ class AprsScreen(urwid.WidgetWrap):
         this screen can pick out APRS messages addressed to us.
         """
         my_call = config.get('AprsMessages', 'source') or config.get('Setup', 'callsign') or ''
-        parsed = _parse_aprs_message(text)
+        parsed = _parse_aprs_message(text, call_from)
         if parsed is None:
             return
-        to_call, body, msg_num = parsed
+        to_call, body, msg_num, call_from = parsed
         # Display if addressed to us or if our callsign is not configured
         if not my_call or to_call.upper() == my_call.upper():
             num_str = ' {{{}}}'.format(msg_num) if msg_num else ''
