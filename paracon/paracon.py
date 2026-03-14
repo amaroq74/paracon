@@ -85,6 +85,12 @@ palette = [
     # Unproto
     ('unproto_error', 'light red', 'black'),
 
+    # APRS Messages
+    ('aprs_outbound', 'light yellow', 'black'),
+    ('aprs_inbound', 'light cyan', 'black'),
+    ('aprs_ack', 'light green', 'black'),
+    ('aprs_error', 'light red', 'black'),
+
     # Line entry
     ('entry_line', 'white', 'black')
 ]
@@ -226,6 +232,7 @@ class MonitorPanel(urwid.WidgetWrap):
         self._list = SizeListBox(self._log)
         self._queue = None
         self._periodic_key = None
+        self._last_call_from = ''
         super().__init__(self._list)
         self._log.set_logfile(app.log_dir / 'monitor.log')
         urwid.connect_signal(app, 'server_started', self._start_monitor)
@@ -252,6 +259,10 @@ class MonitorPanel(urwid.WidgetWrap):
                     line, kind is pserver.MonitorType.UNPROTO_OWN)
                 if clr_line:
                     self.add_line(clr_line)
+                    # Track call_from for subsequent text frames
+                    m = _INFO_LINE_PATTERN.match(line)
+                    if m:
+                        self._last_call_from = m['call_from']
                 else:
                     logger.debug("Coloring failed: {}".format(line))
                     self.add_line(line)
@@ -259,6 +270,12 @@ class MonitorPanel(urwid.WidgetWrap):
                     or kind is pserver.MonitorType.CONN_TEXT):
                 # self.add_line(urwidx.safe_string(line.rstrip()))
                 self.add_multi_line(line)
+                # Forward raw unproto text to AprsScreen for APRS msg parsing
+                if (kind is pserver.MonitorType.UNPROTO_TEXT
+                        and hasattr(app, '_aprs_screen')
+                        and app._aprs_screen is not None):
+                    app._aprs_screen.receive_unproto_text(
+                        self._last_call_from, line)
             elif (kind is pserver.MonitorType.UNPROTO_NETROM
                     or kind is pserver.MonitorType.CONN_NETROM):
                 if line[0] == 0xFF:  # only handle routing broadcasts
@@ -346,7 +363,6 @@ class UnprotoScreen(urwid.WidgetWrap):
         if not src:
             src = config.get('Setup', 'callsign')
         dst = config.get('Unproto', 'destination')
-        to = config.get('Unproto', 'to')
         via = config.get('Unproto', 'via')
         port = config.get_int('Unproto', 'port')
         if port is not None:
@@ -356,22 +372,6 @@ class UnprotoScreen(urwid.WidgetWrap):
         if not self._valid_config(src, dst, via):
             self._mon.add_line(('unproto_error', 'Unproto config is invalid'))
             return
-
-        # If line starts with double colons, fill in configure to value
-        if text.startswith('::') and to != '':
-            remStr = text[2:]
-            text = f':{to:<9}:{remStr}'
-
-        # If line starts with a colon and has another colon less than 9 spaces from the first
-        # pad in the text between the colons to 9 spaces
-        else:
-           colPos = [m.start() for m in re.finditer(':', text)]
-
-           if len(colPos) >= 2 and colPos[0] == 0 and colPos[1] < 10:
-              toStr = text[1:colPos[1]]
-              remStr = text[colPos[1]+1:]
-              text = f':{toStr:<9}:{remStr}'
-
         vias = via.split() if via else None
         try:
             app.server.send_unproto(port, src, dst, text, vias)
@@ -418,7 +418,6 @@ class UnprotoScreen(urwid.WidgetWrap):
         config.set('Unproto', 'source', info.src)
         config.set('Unproto', 'destination', info.dst)
         config.set('Unproto', 'via', info.via)
-        config.set('Unproto', 'to', info.to)
         config.set_int('Unproto', 'port',
                        app.ports.port_for_index(info.port[0]))
         config.save_config()
@@ -430,8 +429,7 @@ class UnprotoScreen(urwid.WidgetWrap):
             src = config.get('Setup', 'callsign')
         dst = config.get('Unproto', 'destination')
         via = config.get('Unproto', 'via')
-        to = config.get('Unproto', 'to')
-        text = "From: {}  Dest: {}  To: {} ".format(src, dst,to)
+        text = "From: {}  Dest: {} ".format(src, dst)
         if via:
             # Vias are saved with spaces, but displayed with commas
             via = ','.join(via.split())
@@ -844,6 +842,7 @@ class Application(metaclass=urwid.MetaSignals):
     class MenuCommand(Enum):
         CONNECTIONS = 'Connections'
         UNPROTO = 'Unproto'
+        APRS_MESSAGES = 'APRS Msg'
         SETUP = 'Setup'
         HELP = 'Help'
         ABOUT = 'About'
@@ -922,11 +921,13 @@ class Application(metaclass=urwid.MetaSignals):
         self._topbar = urwidx.MenuBar(self.MenuCommand)
         self._set_connected("not connected")
         self._topbar.menu.enable(self.MenuCommand.CONNECTIONS, False)
+        self._topbar.menu.enable(self.MenuCommand.APRS_MESSAGES, True)
         urwid.connect_signal(
             self._topbar.menu, 'select', self._handle_menu_command)
         self._monitor_panel = MonitorPanel()
         self._connections_screen = ConnectionsScreen(self._monitor_panel)
         self._unproto_screen = UnprotoScreen(self._monitor_panel)
+        self._aprs_screen = AprsScreen(self._monitor_panel)
         self._frame = urwid.Frame(
             self._connections_screen, header=self._topbar)
         return self._frame
@@ -936,6 +937,8 @@ class Application(metaclass=urwid.MetaSignals):
             self._select_screen(self.MenuCommand.UNPROTO)
         elif cmd is self.MenuCommand.CONNECTIONS:
             self._select_screen(self.MenuCommand.CONNECTIONS)
+        elif cmd is self.MenuCommand.APRS_MESSAGES:
+            self._select_screen(self.MenuCommand.APRS_MESSAGES)
         elif cmd is self.MenuCommand.SETUP:
             self._show_setup()
         elif cmd is self.MenuCommand.HELP:
@@ -951,11 +954,19 @@ class Application(metaclass=urwid.MetaSignals):
                 self._frame.body = self._connections_screen
                 self._topbar.menu.enable(self.MenuCommand.CONNECTIONS, False)
                 self._topbar.menu.enable(self.MenuCommand.UNPROTO, True)
+                self._topbar.menu.enable(self.MenuCommand.APRS_MESSAGES, True)
         elif screen is self.MenuCommand.UNPROTO:
             if self._frame.body != self._unproto_screen:
                 self._frame.body = self._unproto_screen
                 self._topbar.menu.enable(self.MenuCommand.CONNECTIONS, True)
                 self._topbar.menu.enable(self.MenuCommand.UNPROTO, False)
+                self._topbar.menu.enable(self.MenuCommand.APRS_MESSAGES, True)
+        elif screen is self.MenuCommand.APRS_MESSAGES:
+            if self._frame.body != self._aprs_screen:
+                self._frame.body = self._aprs_screen
+                self._topbar.menu.enable(self.MenuCommand.CONNECTIONS, True)
+                self._topbar.menu.enable(self.MenuCommand.UNPROTO, True)
+                self._topbar.menu.enable(self.MenuCommand.APRS_MESSAGES, False)
 
     def _show_setup(self):
         dlg = SetupDialog()
@@ -1457,7 +1468,6 @@ class UnprotoDialog(urwidx.FormDialog):
         src: str
         dst: str
         via: str
-        to: str
         port: tuple
 
     def __init__(self, info=None):
@@ -1469,7 +1479,6 @@ class UnprotoDialog(urwidx.FormDialog):
             src = self._info.src
             dst = self._info.dst
             via = self._info.via
-            to = self._info.to
             port_ix = self._info.port[0]
         else:
             src = (config.get('Unproto', 'source')
@@ -1477,7 +1486,6 @@ class UnprotoDialog(urwidx.FormDialog):
                    or '')
             dst = config.get('Unproto', 'destination') or ''
             via = config.get('Unproto', 'via') or ''
-            to  = config.get('Unproto', 'to') or ''
 
             port = config.get_int('Unproto', 'port')
             # Ensure a valid index into list of ports
@@ -1495,9 +1503,6 @@ class UnprotoDialog(urwidx.FormDialog):
             'dst', 'Destination', group='dest', value=dst,
             filter=callsign_filter)
         self.add_edit_str_field(
-            'to', '         To', group='dest', value=to,
-            filter=callsign_filter)
-        self.add_edit_str_field(
             'via', '        Via', group='dest', value=via,
             filter=via_filter)
         self.add_group('source', "Send Using")
@@ -1511,7 +1516,6 @@ class UnprotoDialog(urwidx.FormDialog):
         src = self.get_edit_str_value('src')
         dst = self.get_edit_str_value('dst')
         via = self.get_edit_str_value('via')
-        to  = self.get_edit_str_value('to')
         if not (src and dst):
             return "Both source and destination are required"
         if not ax25.Address.valid_call(src):
@@ -1531,18 +1535,313 @@ class UnprotoDialog(urwidx.FormDialog):
         src = self.get_edit_str_value('src').upper()
         dst = self.get_edit_str_value('dst').upper()
         via = self.get_edit_str_value('via').upper()
-        to  = self.get_edit_str_value('to').upper()
         port = self.get_dropdown_value('port')
         # The user may have used comma separators or something else, but we
         # standardize here on spaces.
         vias = re.findall("[A-Z0-9-]+", via)
-        info = self.UnprotoInfo(src, dst, ' '.join(vias), to, port)
+        info = self.UnprotoInfo(src, dst, ' '.join(vias), port)
         urwid.emit_signal(self, 'unproto_info', info)
 
 
+
 # =============================================================================
-# Startup
+# APRS Messages
 # =============================================================================
+
+# APRS message number counter (1-999, wrapping)
+_aprs_msg_counter = 0
+
+def _next_aprs_msg_num():
+    global _aprs_msg_counter
+    _aprs_msg_counter = (_aprs_msg_counter % 999) + 1
+    return str(_aprs_msg_counter)
+
+
+def _format_aprs_message(to_call, text, msg_num):
+    """
+    Format an APRS message packet payload per the APRS spec:
+      :CALLSIGN :message text{msgnum}
+    The destination callsign field is exactly 9 characters, left-justified
+    and padded with spaces.
+    """
+    return ':{:<9}:{}{{{}}}'.format(to_call, text, msg_num)
+
+
+def _parse_aprs_message(text):
+    """
+    Parse an APRS message payload. Returns (to_call, msg_body, msg_num) or
+    None if the text is not a valid APRS message.
+    The expected format is:  :CALLSIGN :message{num}
+    """
+    if not text.startswith(':'):
+        return None
+    # Second colon must be at position 10 (9-char callsign field + leading ':')
+    if len(text) < 11 or text[10] != ':':
+        return None
+    to_call = text[1:10].strip()
+    body = text[11:]
+    msg_num = None
+    if '{' in body:
+        brace = body.rfind('{')
+        msg_num = body[brace + 1:]
+        body = body[:brace]
+    return (to_call, body, msg_num)
+
+
+class AprsScreen(urwid.WidgetWrap):
+    """
+    A dedicated screen for APRS direct messages. Messages are sent as unproto
+    UI frames addressed to APICON (the conventional APRS destination) with the
+    payload formatted per the APRS messaging spec.  Incoming APRS messages
+    visible in the monitor queue are displayed here as well.
+    """
+
+    class MenuCommand(Enum):
+        CONFIGURE = 'Dest/Src'
+
+    def __init__(self, mwin):
+        self._mon = mwin
+        self._menubar = urwidx.MenuBar(self.MenuCommand)
+        self._set_info()
+        urwid.connect_signal(
+            self._menubar.menu, 'select', self._handle_menu_command)
+        self._log = urwidx.LoggingDequeListWalker([])
+        self._list = SizeListBox(self._log)
+        self._entry = urwidx.LineEntry(caption="> ", edit_text="")
+        urwid.connect_signal(self._entry, 'line_entry', self._send)
+        self._pile = urwid.Pile([
+            ('weight', 1, self._list),
+            (1, self._menubar),
+            (1, urwid.AttrMap(urwid.Filler(self._entry), 'entry_line'))
+        ])
+        super().__init__(urwid.AttrMap(urwid.LineBox(
+            self._pile, title="APRS Messages", title_align='center'),
+            'window_norm'))
+        urwid.connect_signal(app, 'server_started', self._update_info)
+        self._log.set_logfile(app.log_dir / 'aprs_messages.log')
+
+    # ------------------------------------------------------------------
+    # Inbound message handling
+    # Inbound delivery is via receive_unproto_text(), called from
+    # MonitorPanel._update_from_queue() for every decoded unproto UI
+    # text frame. We do not drain the shared server queue here because
+    # Queue.get() is destructive and MonitorPanel must see every frame.
+    # ------------------------------------------------------------------
+
+    def receive_unproto_text(self, call_from, text):
+        """
+        Called by MonitorPanel for every decoded unproto text frame so that
+        this screen can pick out APRS messages addressed to us.
+        """
+        my_call = config.get('AprsMessages', 'source') or config.get('Setup', 'callsign') or ''
+        parsed = _parse_aprs_message(text)
+        if parsed is None:
+            return
+        to_call, body, msg_num = parsed
+        # Display if addressed to us or if our callsign is not configured
+        if not my_call or to_call.upper() == my_call.upper():
+            num_str = ' {{{}}}'.format(msg_num) if msg_num else ''
+            self.add_line(
+                ('aprs_inbound',
+                 'From {}: {}{}'.format(call_from, body, num_str)))
+            # Send an ACK if we have a message number and a configured source
+            if msg_num and my_call and app.server:
+                self._send_ack(call_from, msg_num)
+
+    def _send_ack(self, to_call, msg_num):
+        src = config.get('AprsMessages', 'source') or config.get('Setup', 'callsign')
+        via = config.get('AprsMessages', 'via') or ''
+        port = config.get_int('AprsMessages', 'port')
+        if port is not None:
+            port = app.ports.valid_port(port)
+        if port is None:
+            port = app.ports.port_for_index(0)
+        dst = 'APICON'
+        ack_text = ':{:<9}:ack{}'.format(to_call, msg_num)
+        vias = via.split() if via else None
+        try:
+            app.server.send_unproto(port, src, dst, ack_text, vias)
+            self.add_line(('aprs_ack', 'ACK sent to {}'.format(to_call)))
+        except BrokenPipeError:
+            self.add_line(('aprs_error', 'AGWPE server has disconnected'))
+            app.server_disappeared()
+
+    # ------------------------------------------------------------------
+    # Sending
+    # ------------------------------------------------------------------
+
+    def _send(self, widget, text):
+        if not app.server:
+            self.add_line(('aprs_error', 'Not connected to AGWPE server'))
+            return
+        src = config.get('AprsMessages', 'source') or config.get('Setup', 'callsign')
+        to = config.get('AprsMessages', 'to') or ''
+        via = config.get('AprsMessages', 'via') or ''
+        port = config.get_int('AprsMessages', 'port')
+        if port is not None:
+            port = app.ports.valid_port(port)
+        if port is None:
+            port = app.ports.port_for_index(0)
+        if not self._valid_config(src, to):
+            self.add_line(('aprs_error', 'APRS config is invalid (source and to are required)'))
+            return
+        msg_num = _next_aprs_msg_num()
+        payload = _format_aprs_message(to, text, msg_num)
+        dst = 'APICON'
+        vias = via.split() if via else None
+        try:
+            app.server.send_unproto(port, src, dst, payload, vias)
+        except BrokenPipeError:
+            self.add_line(('aprs_error', 'AGWPE server has disconnected'))
+            app.server_disappeared()
+            return
+        self.add_line(('aprs_outbound', 'To {} [{}]: {}'.format(to, msg_num, text)))
+
+    def _valid_config(self, src, to):
+        if not src or not ax25.Address.valid_call(src):
+            return False
+        if not to or not ax25.Address.valid_call(to):
+            return False
+        return True
+
+    # ------------------------------------------------------------------
+    # Menu / configuration
+    # ------------------------------------------------------------------
+
+    def _handle_menu_command(self, cmd):
+        if cmd is self.MenuCommand.CONFIGURE:
+            self._configure()
+
+    def _configure(self):
+        dlg = AprsDialog()
+        urwid.connect_signal(dlg, 'aprs_info', self._change_config)
+        dlg.show(app._loop)
+
+    def _change_config(self, info):
+        config.set('AprsMessages', 'source', info.src)
+        config.set('AprsMessages', 'to', info.to)
+        config.set('AprsMessages', 'via', info.via)
+        config.set_int('AprsMessages', 'port',
+                       app.ports.port_for_index(info.port[0]))
+        config.save_config()
+        self._set_info()
+
+    def _set_info(self, data=None):
+        src = config.get('AprsMessages', 'source') or config.get('Setup', 'callsign') or '?'
+        to = config.get('AprsMessages', 'to') or '?'
+        via = config.get('AprsMessages', 'via') or ''
+        text = "From: {}  To: {} ".format(src, to)
+        if via:
+            via = ','.join(via.split())
+            text += " Via: {} ".format(via)
+        self._menubar.status = text
+        return True
+
+    def _update_info(self, server):
+        self._set_info()
+
+    # ------------------------------------------------------------------
+    # Display
+    # ------------------------------------------------------------------
+
+    def add_line(self, line):
+        if not self._list.size:
+            return
+        line = urwidx.safe_text(line)
+        text = urwid.AttrMap(urwid.Text(line), 'monitor_text')
+        ends_visible = self._list.ends_visible(self._list.size)
+        self._log.append(text)
+        if 'bottom' in ends_visible:
+            self._list.set_focus(len(self._log) - 1, 'above')
+
+    def keypress(self, size, key):
+        key = self._menubar.keypress(size, key)
+        if key:
+            key = super().keypress(size, key)
+        if key:
+            key = self._entry.keypress((size[0] - 2, ), key)
+        return key
+
+
+class AprsDialog(urwidx.FormDialog):
+    signals = ['aprs_info']
+
+    class AprsInfo(NamedTuple):
+        src: str
+        to: str
+        via: str
+        port: tuple
+
+    def __init__(self, info=None):
+        self._info = info
+        super().__init__("APRS Messages")
+
+    def add_fields(self):
+        if self._info:
+            src = self._info.src
+            to = self._info.to
+            via = self._info.via
+            port_ix = self._info.port[0]
+        else:
+            src = (config.get('AprsMessages', 'source')
+                   or config.get('Setup', 'callsign')
+                   or '')
+            to = config.get('AprsMessages', 'to') or ''
+            via = config.get('AprsMessages', 'via') or ''
+            port = config.get_int('AprsMessages', 'port')
+            if port is not None:
+                port = app.ports.valid_port(port)
+            if port is not None:
+                port_ix = app.ports.index_for_port(port)
+            else:
+                port_ix = 0
+        via = ','.join(via.split())
+        avail_ports = app.ports.port_info
+        self.add_group('dest', "Send To")
+        self.add_edit_str_field(
+            'to', 'To (callsign)', group='dest', value=to,
+            filter=callsign_filter)
+        self.add_edit_str_field(
+            'via', '            Via', group='dest', value=via,
+            filter=via_filter)
+        self.add_group('source', "Send Using")
+        self.add_edit_str_field(
+            'src', 'My call', group='source', value=src,
+            filter=callsign_filter)
+        self.add_dropdown_field(
+            'port', '    Port', avail_ports, port_ix, group='source')
+
+    def validate(self):
+        src = self.get_edit_str_value('src')
+        to = self.get_edit_str_value('to')
+        via = self.get_edit_str_value('via')
+        if not src:
+            return "My call is required"
+        if not ax25.Address.valid_call(src):
+            return "My call is invalid"
+        if not to:
+            return "To (callsign) is required"
+        if not ax25.Address.valid_call(to):
+            return "To callsign is invalid"
+        if via:
+            vias = re.findall("[A-Za-z0-9-]+", via)
+            if not vias:
+                return "Invalid via"
+            for v in vias:
+                if not ax25.Address.valid_call(v):
+                    return "Invalid via: {}".format(v)
+        return None
+
+    def save(self):
+        src = self.get_edit_str_value('src').upper()
+        to = self.get_edit_str_value('to').upper()
+        via = self.get_edit_str_value('via').upper()
+        port = self.get_dropdown_value('port')
+        vias = re.findall("[A-Z0-9-]+", via)
+        info = self.AprsInfo(src, to, ' '.join(vias), port)
+        urwid.emit_signal(self, 'aprs_info', info)
+
+
 
 def get_args():
     class ConfigFileCheckAction(argparse.Action):
