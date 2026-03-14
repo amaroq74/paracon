@@ -6,7 +6,7 @@
 # =============================================================================
 
 __author__ = 'Martin F N Cooper'
-__version__ = '1.3.1'
+__version__ = '1.3.2'
 
 import argparse
 import codecs
@@ -667,7 +667,8 @@ class ConnectionPanel(urwid.WidgetWrap):
             self._line_remains = parts[-1]
         del parts[-1]
         for part in parts:
-            self.add_line(self._decode_line(part))
+            #self.add_line(self._decode_line(part))
+            self.add_line(part)
 
     def add_line(self, line):
         text = urwid.Text(line)
