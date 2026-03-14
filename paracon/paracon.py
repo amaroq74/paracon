@@ -139,6 +139,46 @@ class SizeListBox(urwid.ListBox):
         return super().render(size, focus)
 
 
+class FixedMenuBar(urwidx.MenuBar):
+    """
+    A MenuBar subclass that allocates a fixed width to the menu portion
+    based on its actual content, giving all remaining space to the status
+    text on the right. The base MenuBar splits the row 50/50 between menu
+    and status, which causes the status text to be clipped when it is long
+    (e.g. a Via path with multiple digipeaters).
+    """
+    # Characters per menu item: name length + SPACING (3) from urwidx.Menu
+    _MENU_ITEM_SPACING = 3
+    # Extra padding added by MenuBar's own urwid.Padding(left=1, right=1)
+    _BAR_PADDING = 2
+
+    def __init__(self, menu_items, status=""):
+        super().__init__(menu_items, status)
+        # Compute the total width consumed by all menu item labels
+        menu_width = sum(
+            len(m.value) + self._MENU_ITEM_SPACING
+            for m in menu_items
+        )
+        # Rebuild the inner widget with a fixed-width left column so the
+        # status Text widget on the right gets whatever space remains.
+        widget = urwid.AttrMap(
+            urwid.Padding(
+                urwid.Columns(
+                    [
+                        (menu_width, urwid.Filler(self._menu)),
+                        urwid.Filler(self._status),
+                    ],
+                    box_columns=[0, 1]
+                ),
+                left=1, right=1
+            ),
+            'menu_text'
+        )
+        self._wrapped_widget = widget
+        # urwid.WidgetWrap stores the wrapped widget in _w
+        self._w = widget
+
+
 class Ports:
     """
     Per the AGWPE spec, port information comes from the server in the form
@@ -339,7 +379,7 @@ class UnprotoScreen(urwid.WidgetWrap):
 
     def __init__(self, mwin):
         self._mon = mwin
-        self._menubar = urwidx.MenuBar(self.MenuCommand)
+        self._menubar = FixedMenuBar(self.MenuCommand)
         self._set_info()
         urwid.connect_signal(
             self._menubar.menu, 'select', self._handle_menu_command)
@@ -1601,7 +1641,7 @@ class AprsScreen(urwid.WidgetWrap):
 
     def __init__(self, mwin):
         self._mon = mwin
-        self._menubar = urwidx.MenuBar(self.MenuCommand)
+        self._menubar = FixedMenuBar(self.MenuCommand)
         self._set_info()
         urwid.connect_signal(
             self._menubar.menu, 'select', self._handle_menu_command)
