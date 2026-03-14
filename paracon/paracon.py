@@ -1560,11 +1560,11 @@ def _next_aprs_msg_num():
 def _format_aprs_message(to_call, text, msg_num):
     """
     Format an APRS message packet payload per the APRS spec:
-      :CALLSIGN :message text{msgnum}
+      :CALLSIGN :message text{msgnum
     The destination callsign field is exactly 9 characters, left-justified
     and padded with spaces.
     """
-    return ':{:<9}:{}{{{}}}'.format(to_call, text, msg_num)
+    return ':{:<9}:{}{{{}}'.format(to_call, text, msg_num)
 
 
 def _parse_aprs_message(text):
@@ -1657,7 +1657,7 @@ class AprsScreen(urwid.WidgetWrap):
             port = app.ports.valid_port(port)
         if port is None:
             port = app.ports.port_for_index(0)
-        ack_text = ':{:<9}:ack{}'.format(to_call, msg_num)
+        ack_text = ':{:<9}:ack{}}'.format(to_call, msg_num)
         vias = via.split() if via else None
         try:
             app.server.send_unproto(port, src, dst, ack_text, vias)
