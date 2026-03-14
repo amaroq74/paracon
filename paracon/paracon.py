@@ -6,7 +6,7 @@
 # =============================================================================
 
 __author__ = 'Martin F N Cooper'
-__version__ = '1.4.0'
+__version__ = '1.4.1'
 
 import argparse
 import codecs
@@ -86,7 +86,7 @@ palette = [
     ('unproto_error', 'light red', 'black'),
 
     # APRS Messages
-    ('aprs_outbound', 'light yellow', 'black'),
+    ('aprs_outbound', 'yellow', 'black'),
     ('aprs_inbound', 'light cyan', 'black'),
     ('aprs_ack', 'light green', 'black'),
     ('aprs_error', 'light red', 'black'),
