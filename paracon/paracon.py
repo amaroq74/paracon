@@ -1613,13 +1613,28 @@ def _format_aprs_message(to_call, text, msg_num):
     """
     return ':{:<9}:{}{{{}'.format(to_call, text, msg_num)
 
-
 def _parse_aprs_message(text):
     """
     Parse an APRS message payload. Returns (to_call, msg_body, msg_num) or
     None if the text is not a valid APRS message.
-    The expected format is:  :CALLSIGN :message{num}
+
+    Handles two formats:
+    1. Standard APRS message:
+         :CALLSIGN :message{num}
+    2. Third-party traffic (prefixed with '}'):
+         }EMAIL>APJIE4,TCPIP,KC6SSM-5*::CALLSIGN :message{num}
+         The third-party header is stripped and the inner payload is parsed normally.
     """
+    # Strip third-party traffic wrapper if present
+    if text.startswith('}'):
+        # The inner APRS payload starts at the '::' that precedes the addressee.
+        # Find the '::' sequence that marks the start of the message block.
+        inner_start = text.find('::')
+        if inner_start == -1:
+            return None
+        # Advance past the first ':', so text is now ':CALLSIGN :message{num}'
+        text = text[inner_start + 1:]
+
     if not text.startswith(':'):
         return None
     # Second colon must be at position 10 (9-char callsign field + leading ':')
@@ -1633,7 +1648,6 @@ def _parse_aprs_message(text):
         msg_num = body[brace + 1:]
         body = body[:brace]
     return (to_call, body, msg_num)
-
 
 class AprsScreen(urwid.WidgetWrap):
     """
