@@ -1739,7 +1739,6 @@ class AprsScreen(urwid.WidgetWrap):
             return
 
         self._aprs_msg_counter = (self._aprs_msg_counter % 999) + 1
-        return str(_aprs_msg_counter)
 
         payload = ':{:<9}:{}{{{}'.format(to, text, self._aprs_msg_counter)
 
