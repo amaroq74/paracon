@@ -1657,7 +1657,7 @@ class AprsScreen(urwid.WidgetWrap):
         if len(text) < 11 or text[10] != ':':
             return None
         to_call = text[1:10].strip()
-        body = text[11:]
+        body = text[11:].rstrip()
         msg_num = None
         if '{' in body:
             brace = body.rfind('{')
