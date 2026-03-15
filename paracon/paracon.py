@@ -1681,7 +1681,7 @@ class AprsScreen(urwid.WidgetWrap):
             num_str = ' {{{}}}'.format(msg_num) if msg_num else ''
             self.add_line(
                 ('aprs_inbound',
-                 'From {}: {}{}'.format(call_from, body, num_str)))
+                 'From {} [{}]: {}'.format(call_from, num_str, body)))
             # Send an ACK if we have a message number and a configured source
             if msg_num and my_call and app.server:
                 self._send_ack(call_from, msg_num)
