@@ -692,16 +692,30 @@ class ConnectionPanel(urwid.WidgetWrap):
         return line
 
     def _gather_lines(self, data):
+        # The text encodings we support all use the C0 control set, so it is
+        # safe to identify line breaks before decoding. This allows us to use
+        # one decoder per line, and avoid having fragments of a single line
+        # decoded with different decoders.
+        data = data.replace(b'\r\n', b'\r').replace(b'\n', b'\r')
+        parts = data.split(b'\r')
+
+        if len(self._line_remains):
+            parts[0] = self._line_remains + parts[0]
+            self._line_remains = b''
+        if data[-1] != b'\r':
+            self._line_remains = parts[-1]
+        del parts[-1]
+        for part in parts:
+            self.add_line(self._decode_line(part))
+
+    def _gather_lines_v2(self, data):
 
         if not isinstance(data, str):
             try:
                 data = data.decode('utf-8')
             except Exception:
                 data = ""
-        # The text encodings we support all use the C0 control set, so it is
-        # safe to identify line breaks before decoding. This allows us to use
-        # one decoder per line, and avoid having fragments of a single line
-        # decoded with different decoders.
+
         data = data.replace('\r\n', '\r').replace('\n', '\r')
         parts = data.split('\r')
 
@@ -712,7 +726,6 @@ class ConnectionPanel(urwid.WidgetWrap):
             self._line_remains = parts[-1]
         del parts[-1]
         for part in parts:
-            #self.add_line(self._decode_line(part))
             self.add_line(part)
 
     def add_line(self, line):
@@ -889,7 +902,7 @@ class Application(metaclass=urwid.MetaSignals):
     class MenuCommand(Enum):
         CONNECTIONS = 'Connections'
         UNPROTO = 'Unproto'
-        APRS_MESSAGES = 'APRS Msg'
+        APRS_MESSAGES = 'Messages'
         SETUP = 'Setup'
         HELP = 'Help'
         ABOUT = 'About'
