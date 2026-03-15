@@ -1699,7 +1699,7 @@ class AprsScreen(urwid.WidgetWrap):
         vias = via.split() if via else None
         try:
             app.server.send_unproto(port, src, dst, ack_text, vias)
-            self.add_line(('aprs_ack', 'ACK sent to {}'.format(to_call)))
+            self.add_line(('aprs_ack', 'ACK [{}] sent to {}'.format(msg_num,to_call)))
         except BrokenPipeError:
             self.add_line(('aprs_error', 'AGWPE server has disconnected'))
             app.server_disappeared()
