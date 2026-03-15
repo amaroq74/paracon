@@ -1601,11 +1601,18 @@ class UnprotoDialog(urwidx.FormDialog):
         info = self.UnprotoInfo(src, dst, ' '.join(vias), port)
         urwid.emit_signal(self, 'unproto_info', info)
 
-
-
 # =============================================================================
 # APRS Messages
 # =============================================================================
+# Some Notes:
+#
+#   Sending an email or SMS results in multiple ack messages being sent as the
+#   confirmation message is sent by multiple IGATEs. It is tempting to put in
+#   code to block this, but it may miss a true retry in a direct message
+#   transactgion.
+#
+#   Its also temping to put in a retry mechanism for message send, but instead I
+#   opted for allowing a simple up key to retrieve last message for manual resend.
 class AprsScreen(urwid.WidgetWrap):
     """
     A dedicated screen for APRS direct messages. Messages are sent as unproto
