@@ -1864,7 +1864,7 @@ class AprsDialog(urwidx.FormDialog):
             'src', 'Source', group='source', value=src,
             filter=callsign_filter)
         self.add_dropdown_field(
-            'port', '    Port', avail_ports, port_ix, group='source')
+            'port', '  Port', avail_ports, port_ix, group='source')
 
     def validate(self):
         src = self.get_edit_str_value('src')
