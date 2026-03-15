@@ -476,7 +476,7 @@ class UnprotoScreen(urwid.WidgetWrap):
             src = config.get('Setup', 'callsign')
         dst = config.get('Unproto', 'destination')
         via = config.get('Unproto', 'via')
-        text = "From: {}  To: {} ".format(src, dst)
+        text = "From: {}  Dest: {} ".format(src, dst)
         if via:
             # Vias are saved with spaces, but displayed with commas
             via = ','.join(via.split())
