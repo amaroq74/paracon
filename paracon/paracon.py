@@ -1609,11 +1609,10 @@ class UnprotoDialog(urwidx.FormDialog):
 class AprsScreen(urwid.WidgetWrap):
     """
     A dedicated screen for APRS direct messages. Messages are sent as unproto
-    UI frames addressed to APICON (the conventional APRS destination) with the
+    UI frames addressed to configured APRS destination with the
     payload formatted per the APRS messaging spec.  Incoming APRS messages
     visible in the monitor queue are displayed here as well.
     """
-
     class MenuCommand(Enum):
         CONFIGURE = 'Dest/Src'
 
@@ -1623,8 +1622,7 @@ class AprsScreen(urwid.WidgetWrap):
         self._last_sent = ''
         self._menubar = FixedMenuBar(self.MenuCommand)
         self._set_info()
-        urwid.connect_signal(
-            self._menubar.menu, 'select', self._handle_menu_command)
+        urwid.connect_signal(self._menubar.menu, 'select', self._handle_menu_command)
         self._log = urwidx.LoggingDequeListWalker([])
         self._list = SizeListBox(self._log)
         self._entry = urwidx.LineEntry(caption="> ", edit_text="")
@@ -1650,7 +1648,7 @@ class AprsScreen(urwid.WidgetWrap):
     def _parse_aprs_message(self, text, from_call):
         """
         Returns (to_call, msg_body, msg_num, ack_call) where ack_call is the
-        station to send the ack to. For normal messages, ack_call == to_call.
+        station to send the ack to. For normal messages, ack_call == from_call.
         For third-party messages, ack_call is the originating station from
         the third-party header.
         """
