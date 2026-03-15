@@ -6,7 +6,7 @@
 # =============================================================================
 
 __author__ = 'Martin F N Cooper'
-__version__ = '1.4.5'
+__version__ = '1.3.0.1'
 
 import argparse
 import codecs
@@ -1606,59 +1606,6 @@ class UnprotoDialog(urwidx.FormDialog):
 # =============================================================================
 # APRS Messages
 # =============================================================================
-
-# APRS message number counter (1-999, wrapping)
-_aprs_msg_counter = 0
-
-def _next_aprs_msg_num():
-    global _aprs_msg_counter
-    _aprs_msg_counter = (_aprs_msg_counter % 999) + 1
-    return str(_aprs_msg_counter)
-
-
-def _format_aprs_message(to_call, text, msg_num):
-    """
-    Format an APRS message packet payload per the APRS spec:
-      :CALLSIGN :message text{msgnum
-    The destination callsign field is exactly 9 characters, left-justified
-    and padded with spaces.
-    """
-    return ':{:<9}:{}{{{}'.format(to_call, text, msg_num)
-
-def _parse_aprs_message(text, from_call):
-    """
-    Returns (to_call, msg_body, msg_num, ack_call) where ack_call is the
-    station to send the ack to. For normal messages, ack_call == to_call.
-    For third-party messages, ack_call is the originating station from
-    the third-party header.
-    """
-    ack_call = from_call
-
-    # Strip third-party traffic wrapper if present
-    if text.startswith('}'):
-        inner_start = text.find('::')
-        if inner_start == -1:
-            return None
-        # Extract originator from header (between '}' and '>')
-        header = text[1:inner_start]           # e.g. "EMAIL>APJIE4,TCPIP,KC6SSM-5*"
-        gt = header.find('>')
-        ack_call = header[:gt] if gt != -1 else None
-        text = text[inner_start + 1:]
-
-    if not text.startswith(':'):
-        return None
-    if len(text) < 11 or text[10] != ':':
-        return None
-    to_call = text[1:10].strip()
-    body = text[11:]
-    msg_num = None
-    if '{' in body:
-        brace = body.rfind('{')
-        msg_num = body[brace + 1:]
-        body = body[:brace]
-
-    return (to_call, body, msg_num, ack_call)
-
 class AprsScreen(urwid.WidgetWrap):
     """
     A dedicated screen for APRS direct messages. Messages are sent as unproto
@@ -1671,6 +1618,7 @@ class AprsScreen(urwid.WidgetWrap):
         CONFIGURE = 'Dest/Src'
 
     def __init__(self, mwin):
+        self._aprs_msg_counter = 0
         self._mon = mwin
         self._last_sent = ''
         self._menubar = FixedMenuBar(self.MenuCommand)
@@ -1699,6 +1647,39 @@ class AprsScreen(urwid.WidgetWrap):
     # text frame. We do not drain the shared server queue here because
     # Queue.get() is destructive and MonitorPanel must see every frame.
     # ------------------------------------------------------------------
+    def _parse_aprs_message(self, text, from_call):
+        """
+        Returns (to_call, msg_body, msg_num, ack_call) where ack_call is the
+        station to send the ack to. For normal messages, ack_call == to_call.
+        For third-party messages, ack_call is the originating station from
+        the third-party header.
+        """
+        ack_call = from_call
+
+        # Strip third-party traffic wrapper if present
+        if text.startswith('}'):
+            inner_start = text.find('::')
+            if inner_start == -1:
+                return None
+            # Extract originator from header (between '}' and '>')
+            header = text[1:inner_start]           # e.g. "EMAIL>APJIE4,TCPIP,KC6SSM-5*"
+            gt = header.find('>')
+            ack_call = header[:gt] if gt != -1 else None
+            text = text[inner_start + 1:]
+
+        if not text.startswith(':'):
+            return None
+        if len(text) < 11 or text[10] != ':':
+            return None
+        to_call = text[1:10].strip()
+        body = text[11:]
+        msg_num = None
+        if '{' in body:
+            brace = body.rfind('{')
+            msg_num = body[brace + 1:]
+            body = body[:brace]
+
+        return (to_call, body, msg_num, ack_call)
 
     def receive_unproto_text(self, call_from, text):
         """
@@ -1706,7 +1687,7 @@ class AprsScreen(urwid.WidgetWrap):
         this screen can pick out APRS messages addressed to us.
         """
         my_call = config.get('AprsMessages', 'source') or config.get('Setup', 'callsign') or ''
-        parsed = _parse_aprs_message(text, call_from)
+        parsed = self._parse_aprs_message(text, call_from)
         if parsed is None:
             return
         to_call, body, msg_num, call_from = parsed
@@ -1758,8 +1739,12 @@ class AprsScreen(urwid.WidgetWrap):
         if not self._valid_config(src, to):
             self.add_line(('aprs_error', 'APRS config is invalid (source and to are required)'))
             return
-        msg_num = _next_aprs_msg_num()
-        payload = _format_aprs_message(to, text, msg_num)
+
+        self._aprs_msg_counter = (self._aprs_msg_counter % 999) + 1
+        return str(_aprs_msg_counter)
+
+        payload = ':{:<9}:{}{{{}'.format(to, text, self._aprs_msg_counter)
+
         vias = via.split() if via else None
         try:
             app.server.send_unproto(port, src, dst, payload, vias)
@@ -1767,7 +1752,7 @@ class AprsScreen(urwid.WidgetWrap):
             self.add_line(('aprs_error', 'AGWPE server has disconnected'))
             app.server_disappeared()
             return
-        self.add_line(('aprs_outbound', 'To {} [{}]: {}'.format(to, msg_num, text)))
+        self.add_line(('aprs_outbound', 'To {} [{}]: {}'.format(to, self._aprs_msg_counter, text)))
         self._last_sent = text
 
     def _valid_config(self, src, to):
