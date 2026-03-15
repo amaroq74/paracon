@@ -443,7 +443,7 @@ class UnprotoScreen(urwid.WidgetWrap):
             key = super().keypress(size, key)
         if key:
             # Up arrow recalls the last sent message into the entry field.
-            if key == 'up' and self._last_sent and not self._entry.get_edit_text():
+            if key == 'shift up' and self._last_sent and not self._entry.get_edit_text():
                 self._entry.set_edit_text(self._last_sent)
                 self._entry.set_edit_pos(len(self._last_sent))
                 return None
@@ -1592,7 +1592,7 @@ class UnprotoDialog(urwidx.FormDialog):
 #   transactgion.
 #
 #   Its also temping to put in a retry mechanism for message send, but instead I
-#   opted for allowing a simple up key to retrieve last message for manual resend.
+#   opted for allowing a simple shift up key to retrieve last message for manual resend.
 class AprsScreen(urwid.WidgetWrap):
     """
     A dedicated screen for APRS direct messages. Messages are sent as unproto
@@ -1804,7 +1804,7 @@ class AprsScreen(urwid.WidgetWrap):
             key = super().keypress(size, key)
         if key:
             # Up arrow recalls the last sent message into the entry field.
-            if key == 'up' and self._last_sent and not self._entry.get_edit_text():
+            if key == 'shift up' and self._last_sent and not self._entry.get_edit_text():
                 self._entry.set_edit_text(self._last_sent)
                 self._entry.set_edit_pos(len(self._last_sent))
                 return None
@@ -1851,17 +1851,17 @@ class AprsDialog(urwidx.FormDialog):
         avail_ports = app.ports.port_info
         self.add_group('dest', "Send To")
         self.add_edit_str_field(
-            'to', 'To (callsign)', group='dest', value=to,
+            'to', '         To', group='dest', value=to,
             filter=callsign_filter)
         self.add_edit_str_field(
-            'dst', '    Destination', group='dest', value=dst,
+            'dst', 'Destination', group='dest', value=dst,
             filter=callsign_filter)
         self.add_edit_str_field(
-            'via', '            Via', group='dest', value=via,
+            'via', '        Via', group='dest', value=via,
             filter=via_filter)
         self.add_group('source', "Send Using")
         self.add_edit_str_field(
-            'src', 'My call', group='source', value=src,
+            'src', 'Source', group='source', value=src,
             filter=callsign_filter)
         self.add_dropdown_field(
             'port', '    Port', avail_ports, port_ix, group='source')
