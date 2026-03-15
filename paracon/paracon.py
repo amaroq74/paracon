@@ -707,26 +707,6 @@ class ConnectionPanel(urwid.WidgetWrap):
         for part in parts:
             self.add_line(self._decode_line(part))
 
-    def _gather_lines_v2(self, data):
-
-        if not isinstance(data, str):
-            try:
-                data = data.decode('utf-8')
-            except Exception:
-                data = ""
-
-        data = data.replace('\r\n', '\r').replace('\n', '\r')
-        parts = data.split('\r')
-
-        if len(self._line_remains):
-            parts[0] = self._line_remains + parts[0]
-            self._line_remains = ''
-        if data[-1] != '\r':
-            self._line_remains = parts[-1]
-        del parts[-1]
-        for part in parts:
-            self.add_line(part)
-
     def add_line(self, line):
         text = urwid.Text(line)
         if type(line) is str:
