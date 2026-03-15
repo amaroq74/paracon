@@ -476,7 +476,7 @@ class UnprotoScreen(urwid.WidgetWrap):
             src = config.get('Setup', 'callsign')
         dst = config.get('Unproto', 'destination')
         via = config.get('Unproto', 'via')
-        text = "From: {}  Dest: {} ".format(src, dst)
+        text = "From: {}  To: {} ".format(src, dst)
         if via:
             # Vias are saved with spaces, but displayed with commas
             via = ','.join(via.split())
@@ -698,7 +698,6 @@ class ConnectionPanel(urwid.WidgetWrap):
         # decoded with different decoders.
         data = data.replace(b'\r\n', b'\r').replace(b'\n', b'\r')
         parts = data.split(b'\r')
-
         if len(self._line_remains):
             parts[0] = self._line_remains + parts[0]
             self._line_remains = b''
@@ -1935,6 +1934,9 @@ class AprsDialog(urwidx.FormDialog):
         urwid.emit_signal(self, 'aprs_info', info)
 
 
+# =============================================================================
+# Startup
+# =============================================================================
 
 def get_args():
     class ConfigFileCheckAction(argparse.Action):
