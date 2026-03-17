@@ -1607,6 +1607,8 @@ class AprsScreen(urwid.WidgetWrap):
         self._aprs_msg_counter = 0
         self._mon = mwin
         self._last_sent = ''
+        self._seen_msg_ids = set()
+        self._seen_acks = set()
         self._menubar = FixedMenuBar(self.MenuCommand)
         self._set_info()
         urwid.connect_signal(self._menubar.menu, 'select', self._handle_menu_command)
@@ -1676,12 +1678,26 @@ class AprsScreen(urwid.WidgetWrap):
         if parsed is None:
             return
         to_call, body, msg_num, call_from = parsed
+        # Deduplicate received ACK frames (body "ackNNN", no msg_num)
+        if not msg_num and body.startswith('ack'):
+            ack_key = (call_from.upper(), body[3:])
+            if ack_key in self._seen_acks:
+                return
+            if len(self._seen_acks) > 200:
+                self._seen_acks.clear()
+            self._seen_acks.add(ack_key)
         # Display if addressed to us or if our callsign is not configured
         if not my_call or to_call.upper() == my_call.upper():
-            num_str = ' {{{}}}'.format(msg_num) if msg_num else ''
-            self.add_line(
-                ('aprs_inbound',
-                 'From {} [{}]: {}'.format(call_from, msg_num, body)))
+            msg_id = (call_from.upper(), msg_num) if msg_num else None
+            is_duplicate = msg_id is not None and msg_id in self._seen_msg_ids
+            if not is_duplicate:
+                self.add_line(
+                    ('aprs_inbound',
+                     'From {} [{}]: {}'.format(call_from, msg_num, body)))
+                if msg_id is not None:
+                    if len(self._seen_msg_ids) > 200:
+                        self._seen_msg_ids.clear()
+                    self._seen_msg_ids.add(msg_id)
             # Send an ACK if we have a message number and a configured source
             if msg_num and my_call and app.server:
                 self._send_ack(call_from, msg_num)
@@ -1699,7 +1715,12 @@ class AprsScreen(urwid.WidgetWrap):
         vias = via.split() if via else None
         try:
             app.server.send_unproto(port, src, dst, ack_text, vias)
-            self.add_line(('aprs_ack', 'ACK [{}] sent to {}'.format(msg_num,to_call)))
+            ack_key = (to_call.upper(), msg_num)
+            if ack_key not in self._seen_acks:
+                self.add_line(('aprs_ack', 'ACK [{}] sent to {}'.format(msg_num, to_call)))
+                if len(self._seen_acks) > 200:
+                    self._seen_acks.clear()
+                self._seen_acks.add(ack_key)
         except BrokenPipeError:
             self.add_line(('aprs_error', 'AGWPE server has disconnected'))
             app.server_disappeared()
