@@ -10,6 +10,7 @@ __version__ = '1.3.0.1'
 
 import argparse
 import codecs
+import datetime
 from enum import Enum
 import logging
 import pathlib
@@ -1691,9 +1692,10 @@ class AprsScreen(urwid.WidgetWrap):
             msg_id = (call_from.upper(), msg_num) if msg_num else None
             is_duplicate = msg_id is not None and msg_id in self._seen_msg_ids
             if not is_duplicate:
+                ts = datetime.datetime.now().strftime('[%H:%M:%S]')
                 self.add_line(
                     ('aprs_inbound',
-                     'From {} [{}]: {}'.format(call_from, msg_num, body)))
+                     '{} From {} [{}]: {}'.format(ts, call_from, msg_num, body)))
                 if msg_id is not None:
                     if len(self._seen_msg_ids) > 200:
                         self._seen_msg_ids.clear()
@@ -1717,7 +1719,8 @@ class AprsScreen(urwid.WidgetWrap):
             app.server.send_unproto(port, src, dst, ack_text, vias)
             ack_key = (to_call.upper(), msg_num)
             if ack_key not in self._seen_acks:
-                self.add_line(('aprs_ack', 'ACK [{}] sent to {}'.format(msg_num, to_call)))
+                ts = datetime.datetime.now().strftime('[%H:%M:%S]')
+                self.add_line(('aprs_ack', '{} ACK [{}] sent to {}'.format(ts, msg_num, to_call)))
                 if len(self._seen_acks) > 200:
                     self._seen_acks.clear()
                 self._seen_acks.add(ack_key)
@@ -1757,7 +1760,8 @@ class AprsScreen(urwid.WidgetWrap):
             self.add_line(('aprs_error', 'AGWPE server has disconnected'))
             app.server_disappeared()
             return
-        self.add_line(('aprs_outbound', 'To {} [{}]: {}'.format(to, self._aprs_msg_counter, text)))
+        ts = datetime.datetime.now().strftime('[%H:%M:%S]')
+        self.add_line(('aprs_outbound', '{} To {} [{}]: {}'.format(ts, to, self._aprs_msg_counter, text)))
         self._last_sent = text
 
     def _valid_config(self, src, to):
