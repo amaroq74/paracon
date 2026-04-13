@@ -76,6 +76,7 @@ palette = [
     ('monitor_text', 'white', 'black'),
     ('monitor_call', 'light green', 'black'),
     ('monitor_own', 'light magenta', 'black'),
+    ('monitor_relayed', 'yellow', 'black'),
 
     # Connections
     ('connection_inbound', 'light cyan', 'black'),
@@ -196,7 +197,18 @@ _INFO_LINE_PATTERN = re.compile(r"""
 """, re.VERBOSE)
 
 
-def _color_info_line(text, own=False):
+def _last_starred_via(via_str):
+    """Return the base callsign (no *) of the last H-bit-set repeater, or None."""
+    if not via_str:
+        return None
+    for via in reversed(via_str.split(',')):
+        via = via.strip()
+        if via.endswith('*'):
+            return via[:-1]
+    return None
+
+
+def _color_info_line(text, own=False, count=0, heard_repeaters=None):
     monitor_call = 'monitor_own' if own else 'monitor_call'
     text = text.rstrip('\x00').rstrip()
     m = _INFO_LINE_PATTERN.match(text)
@@ -212,11 +224,18 @@ def _color_info_line(text, own=False):
         vias = m['call_via'].split(',')
         line.append(('monitor_text', " Via "))
         for via in vias:
-            line.append((monitor_call, via))
+            via = via.strip()
+            base = via.rstrip('*')
+            if heard_repeaters and base in heard_repeaters:
+                line.append(('monitor_relayed', base + '*'))
+            else:
+                line.append((monitor_call, via))
             line.append(('monitor_text', ','))
         line = line[:-1]
+    count_str = " (x{})".format(count) if count > 1 else ""
     line.append(
-        ('monitor_text', " <{}>[{}]".format(m['msg_info'], m['msg_time'])))
+        ('monitor_text', " <{}>{}[{}]".format(
+            m['msg_info'], count_str, m['msg_time'])))
     return line
 
 
@@ -226,10 +245,18 @@ class MonitorPanel(urwid.WidgetWrap):
         self._list = SizeListBox(self._log)
         self._queue = None
         self._periodic_key = None
+        self._pending_unproto = None   # (kind, port, raw_text, clr_line)
+        self._last_unproto = None      # {key, data, widget, time, count, own} for prev packet
+        self._dedup = config.get_bool('Monitor', 'dedup') is not False
         super().__init__(self._list)
         self._log.set_logfile(app.log_dir / 'monitor.log')
         urwid.connect_signal(app, 'server_started', self._start_monitor)
         urwid.connect_signal(app, 'server_stopping', self._stop_monitor)
+
+    def set_dedup(self, value):
+        self._dedup = value
+        if not value:
+            self._last_unproto = None
 
     def _start_monitor(self, server):
         self._queue = server.monitor_queue
@@ -245,22 +272,30 @@ class MonitorPanel(urwid.WidgetWrap):
         while not self._queue.empty():
             (kind, port, line) = self._queue.get()
             if (kind is pserver.MonitorType.UNPROTO_INFO
-                    or kind is pserver.MonitorType.UNPROTO_OWN
-                    or kind is pserver.MonitorType.CONN_INFO
-                    or kind is pserver.MonitorType.SUPER_INFO):
+                    or kind is pserver.MonitorType.UNPROTO_OWN):
+                self._flush_pending_unproto()
                 clr_line = _color_info_line(
                     line, kind is pserver.MonitorType.UNPROTO_OWN)
+                if not clr_line:
+                    logger.debug("Coloring failed: {}".format(line))
+                self._pending_unproto = (kind, port, line, clr_line)
+            elif kind is pserver.MonitorType.UNPROTO_TEXT:
+                self._process_unproto_text(port, line)
+            elif (kind is pserver.MonitorType.CONN_INFO
+                    or kind is pserver.MonitorType.SUPER_INFO):
+                self._flush_pending_unproto()
+                clr_line = _color_info_line(line)
                 if clr_line:
                     self.add_line(clr_line)
                 else:
                     logger.debug("Coloring failed: {}".format(line))
                     self.add_line(line)
-            elif (kind is pserver.MonitorType.UNPROTO_TEXT
-                    or kind is pserver.MonitorType.CONN_TEXT):
-                # self.add_line(urwidx.safe_string(line.rstrip()))
+            elif kind is pserver.MonitorType.CONN_TEXT:
+                self._flush_pending_unproto()
                 self.add_multi_line(line)
             elif (kind is pserver.MonitorType.UNPROTO_NETROM
                     or kind is pserver.MonitorType.CONN_NETROM):
+                self._flush_pending_unproto()
                 if line[0] == 0xFF:  # only handle routing broadcasts
                     try:
                         rb = ax25.netrom.RoutingBroadcast.unpack(line)
@@ -276,12 +311,87 @@ class MonitorPanel(urwid.WidgetWrap):
                                     d.mnemonic,
                                     d.best_neighbor,
                                     d.best_quality))
+            elif (kind is pserver.MonitorType.UNPROTO_BINARY
+                    or kind is pserver.MonitorType.CONN_BINARY):
+                self._flush_pending_unproto()
         return True
+
+    def _flush_pending_unproto(self):
+        if self._pending_unproto is None:
+            return
+        kind, port, raw_text, clr_line = self._pending_unproto
+        self._pending_unproto = None
+        self._last_unproto = None
+        if clr_line:
+            self.add_line(clr_line)
+        else:
+            self.add_line(raw_text)
+
+    def _process_unproto_text(self, port, data_text):
+        pending = self._pending_unproto
+        self._pending_unproto = None
+        if pending is None:
+            self.add_multi_line(data_text)
+            return
+        kind, pport, raw_text, clr_line = pending
+        own = kind is pserver.MonitorType.UNPROTO_OWN
+        m = _INFO_LINE_PATTERN.match(raw_text.rstrip('\x00').rstrip())
+        if m:
+            dupe_key = (pport, m['call_from'], m['call_to'])
+            data_normalized = data_text.strip('\x00').rstrip()
+            if self._dedup:
+                last = self._last_unproto
+                if (last is not None
+                        and last['key'] == dupe_key
+                        and last['data'] == data_normalized
+                        and time.time() - last['time'] < 60.0):
+                    # Consecutive duplicate - accumulate heard repeaters, update in-place
+                    last['count'] += 1
+                    last['time'] = time.time()
+                    newly_heard = _last_starred_via(m['call_via'])
+                    if newly_heard:
+                        last['heard_repeaters'].add(newly_heard)
+                    new_clr = _color_info_line(
+                        raw_text, own,
+                        count=last['count'],
+                        heard_repeaters=last['heard_repeaters'])
+                    if new_clr and last['widget'] is not None:
+                        last['widget'].original_widget.set_text(
+                            urwidx.safe_text(new_clr))
+                        last['widget']._invalidate()
+                        self._log._modified()
+                    return
+            # New packet (or dedup disabled)
+            initial_heard = set()
+            newly_heard = _last_starred_via(m['call_via'])
+            if newly_heard:
+                initial_heard.add(newly_heard)
+            new_clr = _color_info_line(
+                raw_text, own, heard_repeaters=initial_heard)
+            widget = self.add_line(new_clr if new_clr else raw_text)
+            self.add_multi_line(data_text)
+            if self._dedup:
+                self._last_unproto = {
+                    'key': dupe_key,
+                    'data': data_normalized,
+                    'widget': widget,
+                    'time': time.time(),
+                    'count': 1,
+                    'own': own,
+                    'heard_repeaters': initial_heard,
+                }
+        else:
+            self._last_unproto = None
+            if clr_line:
+                self.add_line(clr_line)
+            else:
+                self.add_line(raw_text)
+            self.add_multi_line(data_text)
 
     def add_line(self, line):
         # Skip if the ListBox has not yet been fully initialized
         if not self._list.size:
-            return
+            return None
         line = urwidx.safe_text(line)
         text = urwid.AttrMap(urwid.Text(line), 'monitor_text')
         # Save the state of visibility before appending new content
@@ -291,6 +401,7 @@ class MonitorPanel(urwid.WidgetWrap):
         # user has not scrolled up to view earlier entries)
         if 'bottom' in ends_visible:
             self._list.set_focus(len(self._log) - 1, 'above')
+        return text
 
     def add_multi_line(self, text):
         text = text.rstrip('\x00').rstrip().replace('\r\n', '\r')
@@ -512,6 +623,7 @@ class ConnectionPanel(urwid.WidgetWrap):
             port, info.connect_as, info.connect_to, vias)
         self._connection = conn
         self._periodic_key = app.start_periodic(1.0, self._update_from_queue)
+        self._menubar.menu.enable(self.MenuCommand.DISCONNECT, True)
         self.add_line('Connecting to {} ...'.format(info.connect_to))
         # Connection process will complete in _update_from_queue()
 
@@ -597,7 +709,8 @@ class ConnectionPanel(urwid.WidgetWrap):
                                 self._format_duration())
                             self._connection_start = None
                         else:
-                            message = 'Disconnected'
+                            message = ('connection_error',
+                                       'Connection aborted')
                     self.add_line(message)
                     self._log.set_logfile(None)
                     self._menubar.menu.enable(
@@ -939,6 +1052,7 @@ class Application(metaclass=urwid.MetaSignals):
         host = config.get('Setup', 'host')
         port = config.get_int('Setup', 'port')
         call = config.get('Setup', 'callsign')
+        dedup = config.get_bool('Monitor', 'dedup') is not False
         changed = False
         restart = False
         # If callsign changed, we don't immediately set the new value anywhere,
@@ -949,11 +1063,15 @@ class Application(metaclass=urwid.MetaSignals):
         if setup_info.host != host or setup_info.port != port:
             changed = True
             restart = True
+        if setup_info.dedup != dedup:
+            changed = True
         if changed:
             config.set('Setup', 'host', setup_info.host)
             config.set_int('Setup', 'port', setup_info.port)
             config.set('Setup', 'callsign', setup_info.call)
+            config.set_bool('Monitor', 'dedup', setup_info.dedup)
             config.save_config()
+            self._monitor_panel.set_dedup(setup_info.dedup)
         if restart:
             self._server.stop()
             self._server = None
@@ -1158,7 +1276,8 @@ class ServerStartup:
         host = config.get('Setup', 'host')
         port = config.get_int('Setup', 'port')
         call = config.get('Setup', 'callsign')
-        self._info = SetupDialog.SetupInfo(host, port, call)
+        dedup = config.get_bool('Monitor', 'dedup') is not False
+        self._info = SetupDialog.SetupInfo(host, port, call, dedup)
 
     def write_config(self):
         """
@@ -1168,6 +1287,7 @@ class ServerStartup:
         config.set('Setup', 'host', self._info.host)
         config.set_int('Setup', 'port', self._info.port)
         config.set('Setup', 'callsign', self._info.call)
+        config.set_bool('Monitor', 'dedup', self._info.dedup)
         config.save_config()
 
     def ask_for_info(self):
@@ -1300,6 +1420,7 @@ class SetupDialog(urwidx.FormDialog):
         host: str
         port: int
         call: str
+        dedup: bool = True
 
     def __init__(self, info=None):
         self._info = info
@@ -1310,10 +1431,12 @@ class SetupDialog(urwidx.FormDialog):
             host = self._info.host
             port = self._info.port
             call = self._info.call
+            dedup = self._info.dedup
         else:
             host = config.get('Setup', 'host') or ''
             port = config.get_int('Setup', 'port') or 0
             call = config.get('Setup', 'callsign') or ''
+            dedup = config.get_bool('Monitor', 'dedup') is not False
         self.add_group('server', "AGWPE Server")
         self.add_edit_str_field(
             'host', 'Host', group='server', value=host)
@@ -1323,6 +1446,10 @@ class SetupDialog(urwidx.FormDialog):
         self.add_edit_str_field(
             'call', 'Callsign', group='callsign', value=call,
             filter=callsign_filter)
+        self.add_group('monitor', "Monitor")
+        self.add_dropdown_field(
+            'dedup', 'Dedup unproto', ['Yes', 'No'], 0 if dedup else 1,
+            group='monitor')
 
     def validate(self):
         host = self.get_edit_str_value('host')
@@ -1338,7 +1465,8 @@ class SetupDialog(urwidx.FormDialog):
         host = self.get_edit_str_value('host')
         port = self.get_edit_int_value('port')
         call = self.get_edit_str_value('call').upper()
-        info = self.SetupInfo(host, port, call)
+        dedup = self.get_dropdown_value('dedup')[0] == 0
+        info = self.SetupInfo(host, port, call, dedup)
         urwid.emit_signal(self, 'setup_info', info)
 
 
