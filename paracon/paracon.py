@@ -77,6 +77,7 @@ palette = [
     ('monitor_call', 'light green', 'black'),
     ('monitor_own', 'light magenta', 'black'),
     ('monitor_relayed', 'yellow', 'black'),
+    ('monitor_frame', 'dark cyan', 'black'),
 
     # Connections
     ('connection_inbound', 'light cyan', 'black'),
@@ -234,7 +235,7 @@ def _color_info_line(text, own=False, count=0, heard_repeaters=None):
         line = line[:-1]
     count_str = " (x{})".format(count) if count > 1 else ""
     line.append(
-        ('monitor_text', " <{}>{}[{}]".format(
+        ('monitor_frame', " <{}>{}[{}]".format(
             m['msg_info'], count_str, m['msg_time'])))
     return line
 
@@ -910,10 +911,48 @@ class ConnectionsScreen(urwid.WidgetWrap):
                 key = edit.keypress((size[0] - 2, ), key)
         return key
 
-
 # =============================================================================
 # Application
 # =============================================================================
+
+# Matches any high-color spec: #rrggbb (24-bit), #rgb (256-color cube
+# shortcut), h0-h255 (256-color index), g0-g100 (grayscale index).
+_HIGHCOLOR_RE = re.compile(r'#[0-9a-fA-F]{3,6}\b|(?<![a-z])h\d+\b|(?<![a-z])g\d+\b')
+
+def _apply_theme(base_palette):
+    """
+    Return (palette, highcolor) where palette is a copy of base_palette with
+    any entries overridden by a [Theme] section in the user config, and
+    highcolor is True if any override uses a high-color spec.
+
+    Each key in [Theme] must match a palette entry name; the value is
+    'fg' or 'fg, bg'. Unknown keys are ignored.
+
+    When an override contains a high-color value, the entry is built as a
+    6-tuple (name, basic_fg, basic_bg, mono, high_fg, high_bg) so that
+    urwid's basic 16-color validation uses the original defaults and the
+    high-color values are applied only when the terminal supports them.
+    """
+    if not config.user_cfg.has_section('Theme'):
+        return base_palette, False
+    overrides = dict(config.user_cfg.items('Theme'))
+    highcolor = any(_HIGHCOLOR_RE.search(v) for v in overrides.values())
+    result = []
+    for entry in base_palette:
+        name = entry[0]
+        if name in overrides:
+            parts = overrides[name].split(', ', 1)
+            new_fg = parts[0]
+            new_bg = parts[1] if len(parts) > 1 else entry[2]
+            if _HIGHCOLOR_RE.search(new_fg) or _HIGHCOLOR_RE.search(new_bg):
+                # Keep original 16-color pair as basic fallback; put the
+                # override values in the high-color slots (positions 4, 5).
+                entry = (name, entry[1], entry[2], 'default', new_fg, new_bg)
+            else:
+                entry = (name, new_fg, new_bg) + entry[3:]
+        result.append(entry)
+    return result, highcolor
+
 
 class MonitorLogHandler(logging.Handler):
     def __init__(self, level=logging.NOTSET):
@@ -936,7 +975,7 @@ class Application(metaclass=urwid.MetaSignals):
         QUIT = 'Quit'
 
     def __init__(self):
-        self._palette = palette
+        self._palette, self._highcolor = _apply_theme(palette)
         self._loop = None
         self._last_mouse_press = 0
         self._server = None
@@ -1172,14 +1211,18 @@ class Application(metaclass=urwid.MetaSignals):
         self._configure_logging()
         self._loop = urwid.MainLoop(
             self._create_widgets(),
-            palette=self._palette,
+            palette=[],
             pop_ups=True,
             input_filter=urwidx.mouse_double_press_filter,
             unhandled_input=self._unhandled_input)
         if not IS_WINDOWS:
             self._loop.screen.write(XTPUSHCOLORS)
-            self._loop.screen.set_terminal_properties(16)
-            self._loop.screen.reset_default_terminal_palette()
+            if self._highcolor:
+                self._loop.screen.set_terminal_properties(2**24)
+            else:
+                self._loop.screen.set_terminal_properties(16)
+                self._loop.screen.reset_default_terminal_palette()
+        self._loop.screen.register_palette(self._palette)
         self._loop.set_alarm_in(0, self._start_server)
         self._loop.run()
         if not IS_WINDOWS:
