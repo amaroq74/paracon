@@ -240,6 +240,116 @@ def _color_info_line(text, own=False, count=0, heard_repeaters=None):
     return line
 
 
+# =============================================================================
+# ANSI SGR Parser
+# =============================================================================
+
+_ANSI_CSI_SGR_RE = re.compile(r'\x1b\[([0-9;]*)m')
+
+# urwid color names for ANSI indices 0-7 (standard) and 8-15 (bright)
+_ANSI_COLORS_16 = [
+    'black', 'dark red', 'dark green', 'brown',
+    'dark blue', 'dark magenta', 'dark cyan', 'light gray',
+    'dark gray', 'light red', 'light green', 'yellow',
+    'light blue', 'light magenta', 'light cyan', 'white',
+]
+
+
+def _make_ansi_attr(fg, bg, bold, italics, underline):
+    """Build a urwid AttrSpec from the current ANSI SGR state."""
+    attrs = []
+    if bold:
+        attrs.append('bold')
+    if italics:
+        attrs.append('italics')
+    if underline:
+        attrs.append('underline')
+    fg_spec = fg + (',' + ','.join(attrs) if attrs else '')
+    needs_true = (
+        (fg.startswith('#') and len(fg) == 7)
+        or (bg.startswith('#') and len(bg) == 7)
+    )
+    return urwid.AttrSpec(fg_spec, bg, colors=(2 ** 24 if needs_true else 256))
+
+
+def _parse_ansi_markup(line):
+    """Parse ANSI SGR escape sequences and return a urwid markup list.
+
+    Returns a list of (AttrSpec, text) tuples when the line contains any SGR
+    sequences, or None when there are none (so callers can fall back to
+    palette-name styling).
+    """
+    if '\x1b' not in line:
+        return None
+    markup = []
+    fg, bg = 'default', 'default'
+    bold = italics = underline = False
+    pos = 0
+    for m in _ANSI_CSI_SGR_RE.finditer(line):
+        segment = line[pos:m.start()]
+        if segment:
+            markup.append((_make_ansi_attr(fg, bg, bold, italics, underline),
+                           segment))
+        pos = m.end()
+        params_str = m.group(1)
+        params = ([int(p) for p in params_str.split(';') if p]
+                  if params_str else [0])
+        i = 0
+        while i < len(params):
+            p = params[i]
+            if p == 0:
+                fg, bg = 'default', 'default'
+                bold = italics = underline = False
+            elif p == 1:
+                bold = True
+            elif p == 3:
+                italics = True
+            elif p == 4:
+                underline = True
+            elif p == 22:
+                bold = False
+            elif p == 23:
+                italics = False
+            elif p == 24:
+                underline = False
+            elif 30 <= p <= 37:
+                fg = _ANSI_COLORS_16[p - 30]
+            elif p == 38 and i + 1 < len(params):
+                mode = params[i + 1]
+                if mode == 2 and i + 4 < len(params):
+                    fg = '#{:02x}{:02x}{:02x}'.format(
+                        params[i + 2], params[i + 3], params[i + 4])
+                    i += 4
+                elif mode == 5 and i + 2 < len(params):
+                    fg = 'h{:d}'.format(params[i + 2])
+                    i += 2
+            elif p == 39:
+                fg = 'default'
+            elif 40 <= p <= 47:
+                bg = _ANSI_COLORS_16[p - 40]
+            elif p == 48 and i + 1 < len(params):
+                mode = params[i + 1]
+                if mode == 2 and i + 4 < len(params):
+                    bg = '#{:02x}{:02x}{:02x}'.format(
+                        params[i + 2], params[i + 3], params[i + 4])
+                    i += 4
+                elif mode == 5 and i + 2 < len(params):
+                    bg = 'h{:d}'.format(params[i + 2])
+                    i += 2
+            elif p == 49:
+                bg = 'default'
+            elif 90 <= p <= 97:
+                fg = _ANSI_COLORS_16[p - 90 + 8]
+            elif 100 <= p <= 107:
+                bg = _ANSI_COLORS_16[p - 100 + 8]
+            i += 1
+    remaining = line[pos:]
+    if remaining:
+        markup.append((_make_ansi_attr(fg, bg, bold, italics, underline),
+                       remaining))
+    return markup if markup else None
+
+
 class MonitorPanel(urwid.WidgetWrap):
     def __init__(self):
         self._log = urwidx.LoggingDequeListWalker([])
@@ -552,7 +662,7 @@ class ConnectionPanel(urwid.WidgetWrap):
         self._decoders = self._init_decoders()
         self._timer_key = None
         self._periodic_key = None
-        self._line_remains = ''
+        self._line_remains = b''
         self._log = urwidx.LoggingDequeListWalker([])
         self._list = SizeListBox(self._log)
         self._menubar = urwidx.MenuBar(self.MenuCommand)
@@ -751,16 +861,21 @@ class ConnectionPanel(urwid.WidgetWrap):
         if len(self._line_remains):
             parts[0] = self._line_remains + parts[0]
             self._line_remains = b''
-        if data[-1] != b'\r':
+        if data[-1:] != b'\r':
             self._line_remains = parts[-1]
         del parts[-1]
         for part in parts:
             self.add_line(self._decode_line(part))
 
     def add_line(self, line):
-        text = urwid.Text(line)
         if type(line) is str:
-            text = urwid.AttrMap(text, 'connection_inbound')
+            markup = _parse_ansi_markup(line)
+            if markup is not None:
+                text = urwid.Text(markup)
+            else:
+                text = urwid.AttrMap(urwid.Text(line), 'connection_inbound')
+        else:
+            text = urwid.Text(line)
         # Save the state of visibility before appending new content
         ends_visible = self._list.ends_visible(self._list.size)
         self._log.append(text)
