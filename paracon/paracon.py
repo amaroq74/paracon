@@ -898,6 +898,9 @@ class ConnectionPanel(urwid.WidgetWrap):
                 self._gather_lines(data)
             else:
                 logger.debug('Unknown queue entry: {}'.format(kind))
+        if self._line_remains:
+            self.add_line(self._decode_line(self._line_remains))
+            self._line_remains = b''
         return result
 
     def _decode_line(self, data):
