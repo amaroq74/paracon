@@ -245,6 +245,15 @@ def _color_info_line(text, own=False, count=0, heard_repeaters=None):
 # =============================================================================
 
 _ANSI_CSI_SGR_RE = re.compile(r'\x1b\[([0-9;]*)m')
+# Matches a partial CSI SGR escape at end of bytes (ESC alone, ESC+[, or
+# ESC+[params with no closing 'm'), so we can avoid flushing an incomplete
+# escape sequence prematurely.
+_ANSI_PARTIAL_ESC_RE = re.compile(rb'\x1b(\[([0-9;]*))?$')
+
+# How long (seconds) to hold a partial escape sequence before giving up and
+# flushing it as raw text. Safety net for data loss; under normal operation
+# the completing bytes arrive in the very next frame.
+_LINE_REMAINS_TIMEOUT = 2.0
 
 # urwid color names for ANSI indices 0-7 (standard) and 8-15 (bright)
 _ANSI_COLORS_16 = [
@@ -662,6 +671,8 @@ class ConnectionPanel(urwid.WidgetWrap):
         self._decoders = self._init_decoders()
         self._timer_key = None
         self._periodic_key = None
+        self._line_remains_time = 0.0
+        self._partial_widget = None
         self._line_remains = b''
         self._log = urwidx.LoggingDequeListWalker([])
         self._list = SizeListBox(self._log)
@@ -756,6 +767,8 @@ class ConnectionPanel(urwid.WidgetWrap):
             app.stop_periodic(self._periodic_key)
             self._periodic_key = None
         self._log.set_logfile(None)
+        self._line_remains = b''
+        self._partial_widget = None
         self._menubar.menu.enable(
             self.MenuCommand.CONNECT, True)
         self._menubar.menu.enable(
@@ -822,6 +835,8 @@ class ConnectionPanel(urwid.WidgetWrap):
                         else:
                             message = ('connection_error',
                                        'Connection aborted')
+                    self._line_remains = b''
+                    self._partial_widget = None
                     self.add_line(message)
                     self._log.set_logfile(None)
                     self._menubar.menu.enable(
@@ -834,8 +849,17 @@ class ConnectionPanel(urwid.WidgetWrap):
             else:
                 logger.debug('Unknown queue entry: {}'.format(kind))
         if self._line_remains:
-            self.add_line(self._decode_line(self._line_remains))
-            self._line_remains = b''
+            if _ANSI_PARTIAL_ESC_RE.search(self._line_remains):
+                # Incomplete escape sequence: hold until the next frame
+                # completes it. Flush as raw text after the timeout as a
+                # safety net in case the completing bytes never arrive.
+                if time.time() - self._line_remains_time > _LINE_REMAINS_TIMEOUT:
+                    self._show_partial(self._decode_line(self._line_remains))
+            else:
+                # Normal unterminated text: show or update in-place now.
+                # The content stays in _line_remains so the next frame can
+                # still combine with it; _show_partial will update the row.
+                self._show_partial(self._decode_line(self._line_remains))
         return result
 
     def _decode_line(self, data):
@@ -861,27 +885,66 @@ class ConnectionPanel(urwid.WidgetWrap):
         # decoded with different decoders.
         data = data.replace(b'\r\n', b'\r').replace(b'\n', b'\r')
         parts = data.split(b'\r')
-        if len(self._line_remains):
+        had_remains = bool(self._line_remains)
+        if had_remains:
             parts[0] = self._line_remains + parts[0]
             self._line_remains = b''
         if data[-1:] != b'\r':
             self._line_remains = parts[-1]
+            self._line_remains_time = time.time()
         del parts[-1]
-        for part in parts:
-            self.add_line(self._decode_line(part))
+        for i, part in enumerate(parts):
+            decoded = self._decode_line(part)
+            if i == 0 and had_remains and self._partial_widget is not None:
+                # The first CR-terminated line completes what was partially
+                # shown on screen: update that row in-place.
+                self._finalize_partial(decoded)
+            else:
+                self.add_line(decoded)
 
-    def add_line(self, line):
+    def _make_line_widget(self, line):
         if type(line) is str:
             markup = _parse_ansi_markup(line)
             if markup is not None:
-                text = urwid.Text(markup)
+                return urwid.Text(markup)
             else:
-                text = urwid.AttrMap(urwid.Text(line), 'connection_inbound')
+                return urwid.AttrMap(urwid.Text(line), 'connection_inbound')
         else:
-            text = urwid.Text(line)
+            return urwid.Text(line)
+
+    def _show_partial(self, line):
+        widget = self._make_line_widget(line)
+        if self._partial_widget is None:
+            # First time: append a new row and auto-scroll.
+            ends_visible = self._list.ends_visible(self._list.size)
+            self._log.append(widget)
+            if 'bottom' in ends_visible:
+                self._list.set_focus(len(self._log) - 1, 'above')
+        else:
+            # Already on screen as the last row: replace it in-place.
+            self._log[-1] = widget
+            self._log._modified()
+        self._partial_widget = widget
+
+    def _finalize_partial(self, line):
+        widget = self._make_line_widget(line)
+        self._log[-1] = widget
+        self._log._modified()
+        self._partial_widget = None
+
+    def add_line(self, line):
+        # Adding a complete line clears any in-progress partial state.
+        # If a partial row was already on screen (_partial_widget set), also
+        # clear _line_remains: the displayed fragment is now stranded below a
+        # new permanent row and can no longer be updated in-place, so keeping
+        # it would cause a duplicate on the next flush.
+        if self._partial_widget is not None:
+            self._line_remains = b''
+        self._partial_widget = None
+        widget = self._make_line_widget(line)
         # Save the state of visibility before appending new content
         ends_visible = self._list.ends_visible(self._list.size)
-        self._log.append(text)
+        self._log.append(widget)
         # Auto-scroll only if the last entry is currently visible (i.e. the
         # user has not scrolled up to view earlier entries)
         if 'bottom' in ends_visible:
