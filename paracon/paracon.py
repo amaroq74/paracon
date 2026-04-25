@@ -224,10 +224,18 @@ def _color_info_line(text, own=False, count=0, heard_repeaters=None):
     if m['call_via']:
         vias = m['call_via'].split(',')
         line.append(('monitor_text', " Via "))
-        for via in vias:
+        # Find the index of the last via with a '*', which indicates an H-bit-set
+        # repeater. This is necessary because a repeater may appear multiple times
+        # and we only want to color up to the ones that are actually repeated.
+        last_repeated_index = 0
+        for index, via in enumerate(vias):
+            if via.strip().endswith('*'):
+                last_repeated_index = index
+
+        for index, via in enumerate(vias):
             via = via.strip()
             base = via.rstrip('*')
-            if heard_repeaters and base in heard_repeaters:
+            if heard_repeaters and base in heard_repeaters and index <= last_repeated_index:
                 line.append(('monitor_relayed', base + '*'))
             else:
                 line.append((monitor_call, via))
