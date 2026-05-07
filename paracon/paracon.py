@@ -282,7 +282,7 @@ def _color_info_line(text, own=False, count=0, heard_repeaters=None):
             via = via.strip()
             base = via.rstrip('*')
             if heard_repeaters and base in heard_repeaters and index <= last_repeated_index:
-                line.append(('monitor_relayed', base + '*'))
+                line.append(('monitor_relayed', via))
             else:
                 line.append((monitor_call, via))
             line.append(('monitor_text', ','))
