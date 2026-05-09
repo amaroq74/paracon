@@ -6,7 +6,7 @@
 # =============================================================================
 
 __author__ = 'Martin F N Cooper'
-__version__ = '1.3.0.1'
+__version__ = '1.3.0.2'
 
 import argparse
 import codecs
