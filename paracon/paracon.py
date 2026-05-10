@@ -453,9 +453,17 @@ class MonitorPanel(urwid.WidgetWrap):
                     line, kind is pserver.MonitorType.UNPROTO_OWN)
                 if not clr_line:
                     logger.debug("Coloring failed: {}".format(line))
+                m = _INFO_LINE_PATTERN.match(line)
+                if m:
+                    self._last_call_from = m['call_from']
                 self._pending_unproto = (kind, port, line, clr_line)
             elif kind is pserver.MonitorType.UNPROTO_TEXT:
                 self._process_unproto_text(port, line)
+
+                # Forward raw unproto text to AprsScreen for APRS msg parsing
+                if (hasattr(app, '_aprs_screen') and app._aprs_screen is not None):
+                    app._aprs_screen.receive_unproto_text(self._last_call_from, line)
+
             elif (kind is pserver.MonitorType.CONN_INFO
                     or kind is pserver.MonitorType.SUPER_INFO):
                 self._flush_pending_unproto()
@@ -472,12 +480,6 @@ class MonitorPanel(urwid.WidgetWrap):
             elif kind is pserver.MonitorType.CONN_TEXT:
                 self._flush_pending_unproto()
                 self.add_multi_line(line)
-                # Forward raw unproto text to AprsScreen for APRS msg parsing
-                if (kind is pserver.MonitorType.UNPROTO_TEXT
-                        and hasattr(app, '_aprs_screen')
-                        and app._aprs_screen is not None):
-                    app._aprs_screen.receive_unproto_text(
-                        self._last_call_from, line)
             elif (kind is pserver.MonitorType.UNPROTO_NETROM
                     or kind is pserver.MonitorType.CONN_NETROM):
                 self._flush_pending_unproto()
