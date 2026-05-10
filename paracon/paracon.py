@@ -2037,7 +2037,7 @@ class AprsScreen(urwid.WidgetWrap):
         this screen can pick out APRS messages addressed to us.
         """
         my_call = config.get('AprsMessages', 'source') or config.get('Setup', 'callsign') or ''
-        parsed = self._parse_aprs_message(text, call_from)
+        parsed = self._parse_aprs_message(text.strip('\x00'), call_from)
         if parsed is None:
             return
         to_call, body, msg_num, call_from = parsed
