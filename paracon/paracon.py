@@ -6,7 +6,8 @@
 # =============================================================================
 
 __author__ = 'Martin F N Cooper'
-__version__ = '1.3.0'
+# Version is overridden at release time by the CI workflow from the git tag
+__version__ = '0.0.0'
 
 import argparse
 import codecs
