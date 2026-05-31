@@ -37,6 +37,7 @@ To enable this, you will need to set the necessary file permission using:
 Paracon will create its configuration and log files in your *current directory*
 when you start it, not the directory in which the .pyz file is located, so you
 should start it from wherever you would like these files to be created.
+(However, see :ref:`Settings` for information on alternative locations.)
 
 The first time you start Paracon, you will see the Setup window.
 
@@ -184,6 +185,8 @@ server. Click on the down-arrow to open the list. In many cases, you will have
 only one available port, and can leave this field as it is. If your server
 provides multiple ports, you can select the appropriate one here.
 
+.. _settings:
+
 Settings
 --------
 
@@ -191,20 +194,82 @@ Paracon will remember the information you enter in the Setup, Connect and
 Unproto Dest/Src dialogs. When you bring up one of these dialogs, it will
 initially show whatever values you had last entered.
 
-These settings are saved in a text file named `paracon.cfg` in your current
-directory when you started Paracon. Should you get into a confused state at
-any time, you may simply delete this file. The next time you start Paracon,
+These settings are saved, by default, in a text file named `paracon.cfg` in your
+current directory when you started Paracon. Should you get into a confused state
+at any time, you may simply delete this file. The next time you start Paracon,
 it will start fresh with the Setup dialog.
 
 If you need to maintain multiple Paracon configurations - perhaps different
 setups for different servers, for example - you can do so simply by starting
-Paracon from a different directory for each configuration.
+Paracon from a different directory for each configuration. Alternatively, you
+can specify the location of separate configuration files on the command line,
+when you start Paracon. See :ref:`Command-line options <cli-options>` below.
+
+Conversely, if you wish to share the same configuration file regardless of where
+you start Paracon, you can move your `paracon.cfg` to your home directory after
+Paracon initially creates it, and Paracon will find it there.
+
+Text encodings
+~~~~~~~~~~~~~~
+
+When connected to a remote site (e.g. a BBS), Paracon interprets the text it
+receives as UTF-8 encoded. In the overwhelming majority of circumstances, this
+works as expected. However, on very rare occasions, content may be received
+that was encoded using a different, non-compatible encoding. An example is
+old line drawings created using the original IBM PC character set.
+
+To allow for this, Paracon will try an alternate decoder if UTF-8 decoding
+fails on a given line of text. If the alternate also fails, Paracon will revert
+to UTF-8 but using the standard Unicode replacement character (�) in place of
+any problem characters.
+
+Why not allow for multiple alternate decoders? The problem is that it is not
+possible for Paracon to determine which alternate is the correct one, because
+the same character code may be a valid character in more than one alternate. As
+an example, the degree symbol (°) in the old Windows encoding is a light shaded
+box (░) in the original IBM PC encoding. The same character code (i.e. byte
+value) is valid in both encodings, but the characters themselves are different.
+
+By default, the alternate decoder is that for ``cp437``, which is the
+aforementioned original IBM PC encoding. It is possible to change this if you
+know for certain that you will be receiving content in a different encoding.
+To specify a different alternate, you need to edit your `paracon.cfg` file and
+add an entry like the following:
+
+.. code-block:: console
+
+    [Connect]
+    decode_alt = cp1252
+
+This example specifies that the old Windows encoding, ``cp1252``, should be
+used as the alternate decoder instead of the default ``cp437``.
+
+.. _cli-options:
+
+Command-line options
+--------------------
+
+The default locations of the Paracon configuration and log files may be
+overridden via command-line options, as follows.
+
+-c, --config CONFIGFILE
+   The full path to the configuration file used to save settings. If this file
+   does not yet exist, Paracon will create it when new settings are saved.
+
+-l, --logdir LOGDIR
+   The full path to the directory in which Paracon should create its log files.
+   If this directory does not exist, Paracon will create it on startup.
+
+-V, --version
+   Print out the Paracon version and exit.
 
 Logging
 -------
 
-Paracon maintains a number of log files in the same directory as the Paracon
-.pyz file.
+Paracon maintains a number of log files. By default, these are located in your
+*current directory* when you start Paracon. Alternatively, you can specify a
+log directory on the command line, when you start Paracon. See
+:ref:`Command-line options <cli-options>` above.
 
 paracon.log
    Contains information about any errors that have occurred during the

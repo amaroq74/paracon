@@ -22,14 +22,31 @@ Key features of Paracon include:
 - Self-contained executable requires only a Python installation to run, without
   the need to install any additional dependencies.
 
+.. sidebar::
+    :class: bmc-sidebar
+
+    .. raw:: html
+
+        <link href="https://fonts.googleapis.com/css?family=Cookie&amp;display=swap" rel="stylesheet">
+        <a class="bmc-btn" target="_blank" href="https://buymeacoffee.com/pyham"><svg height="28" width="19"><image xlink:href="_static/images/bmc-logo.svg" src="_static/images/bmc-logo.png" height="28" width="19"/></svg><span class="bmc-btn-text">&nbsp;Buy me a coffee</span></a>
+
 :Author: Martin F N Cooper, KD6YAM
 :License: :doc:`MIT License <license>`
+
+Compatibility
+~~~~~~~~~~~~~
+
+- Due to
+  `limitations of the TUI library <https://github.com/urwid/urwid?tab=readme-ov-file#windows-support-notes>`__
+  on which Paracon is built, Paracon on Windows requires Windows 10 or later.
+
+- When used with LinBPQ, Paracon requires LinBPQ 6.0.24.73 or later.
 
 Installation
 ------------
 
 .. important::
-   This application requires Python 3.7 or later.
+   This application requires Python 3.9 or later.
 
 Download the latest release from GitHub.
 
@@ -59,7 +76,8 @@ server set up, see `References <#references>`__ below for more information.
 
 Note that Paracon will create its configuration and log files in your *current
 directory* when you start it, not the directory in which the ``.pyz`` file is
-located.
+located. (However, see the :doc:`userguide` for information on alternative
+locations.)
 
 To start Paracon, open a terminal window (Command Prompt or PowerShell on
 Windows), change directory to a suitable location for your configuration and
