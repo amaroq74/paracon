@@ -5,5 +5,5 @@ dist/
 _zipapp/
 paracon*.pyz
 paracon.cfg
-*.log
+*.log*
 .python-version

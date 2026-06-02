@@ -245,18 +245,17 @@ _INFO_LINE_PATTERN = re.compile(r"""
 """, re.VERBOSE)
 
 
-def _last_starred_via(via_str):
-    """Return the base callsign (no *) of the last H-bit-set repeater, or None."""
+def _starred_via_indices(via_str):
+    """Return the set of via-list positions (0-based) where an H-bit-set '*' appears."""
     if not via_str:
-        return None
-    for via in reversed(via_str.split(',')):
-        via = via.strip()
-        if via.endswith('*'):
-            return via[:-1]
-    return None
+        return set()
+    return {
+        i for i, v in enumerate(via_str.split(','))
+        if v.strip().endswith('*')
+    }
 
 
-def _color_info_line(text, own=False, count=0, heard_repeaters=None):
+def _color_info_line(text, own=False, count=0, heard_indices=None):
     monitor_call = 'monitor_own' if own else 'monitor_call'
     text = text.rstrip('\x00').rstrip()
     m = _INFO_LINE_PATTERN.match(text)
@@ -271,19 +270,12 @@ def _color_info_line(text, own=False, count=0, heard_repeaters=None):
     if m['call_via']:
         vias = m['call_via'].split(',')
         line.append(('monitor_text', " Via "))
-        # Find the index of the last via with a '*', which indicates an H-bit-set
-        # repeater. This is necessary because a repeater may appear multiple times
-        # and we only want to color up to the ones that are actually repeated.
-        last_repeated_index = 0
-        for index, via in enumerate(vias):
-            if via.strip().endswith('*'):
-                last_repeated_index = index
 
         for index, via in enumerate(vias):
             via = via.strip()
             base = via.rstrip('*')
-            if heard_repeaters and base in heard_repeaters and index <= last_repeated_index:
-                line.append(('monitor_relayed', via))
+            if heard_indices and index in heard_indices:
+                line.append(('monitor_relayed', base + '*'))
             else:
                 line.append((monitor_call, via))
             line.append(('monitor_text', ','))
@@ -533,16 +525,14 @@ class MonitorPanel(urwid.WidgetWrap):
                         and last['key'] == dupe_key
                         and last['data'] == data_normalized
                         and time.time() - last['time'] < 60.0):
-                    # Consecutive duplicate - accumulate heard repeaters, update in-place
+                    # Consecutive duplicate - accumulate heard indices, update in-place
                     last['count'] += 1
                     last['time'] = time.time()
-                    newly_heard = _last_starred_via(m['call_via'])
-                    if newly_heard:
-                        last['heard_repeaters'].add(newly_heard)
+                    last['heard_indices'] |= _starred_via_indices(m['call_via'])
                     new_clr = _color_info_line(
                         raw_text, own,
                         count=last['count'],
-                        heard_repeaters=last['heard_repeaters'])
+                        heard_indices=last['heard_indices'])
                     if new_clr and last['widget'] is not None:
                         last['widget'].original_widget.set_text(
                             urwidx.safe_text(new_clr))
@@ -550,12 +540,9 @@ class MonitorPanel(urwid.WidgetWrap):
                         self._log._modified()
                     return
             # New packet (or dedup disabled)
-            initial_heard = set()
-            newly_heard = _last_starred_via(m['call_via'])
-            if newly_heard:
-                initial_heard.add(newly_heard)
+            initial_heard = _starred_via_indices(m['call_via'])
             new_clr = _color_info_line(
-                raw_text, own, heard_repeaters=initial_heard)
+                raw_text, own, heard_indices=initial_heard)
             widget = self.add_line(new_clr if new_clr else raw_text)
             self.add_multi_line(data_text)
             if self._dedup:
@@ -566,7 +553,7 @@ class MonitorPanel(urwid.WidgetWrap):
                     'time': time.time(),
                     'count': 1,
                     'own': own,
-                    'heard_repeaters': initial_heard,
+                    'heard_indices': initial_heard,
                 }
         else:
             self._last_unproto = None
